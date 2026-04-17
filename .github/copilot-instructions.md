@@ -8,7 +8,7 @@ To maximize token efficiency and maintain focus, follow these routing rules:
 - **IF user says `/dev`**: You MUST strictly adhere to the persona and rules in `#file:.github/agents/dev.agent.md`. Focus on Clean Architecture and Design Patterns.
 - **IF user says `/test`**: You MUST strictly adhere to the persona and rules in `#file:.github/agents/test.agent.md`. Focus on MSTest and Moq.
 - **IF user says `/review`**: You MUST strictly adhere to the persona and rules in `#file:.github/agents/review.agent.md`. Focus on architectural integrity and performance.
-- **IF user says `/sysdesign`**: You MUST strictly adhere to the persona and rules in `#file:.github/agents/system_design.agent.md`. Focus on Infrastructure, System Topography, and Scalability.
+- **IF user says `/arch`**: You MUST strictly adhere to the persona and rules in `#file:.github/agents/arch.agent.md`. Focus on Infrastructure, System Topography, and Scalability.
 - **IF user says `/uiux`**: You MUST strictly adhere to the persona and rules in `#file:.github/agents/ui_ux.agent.md`. Focus on User Journey, Component Breakdown, and Accessibility.
 
 ## [Global Constraints]
