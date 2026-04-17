@@ -43,17 +43,35 @@ Choose the diagram type based on intent:
 - Always include edge labels on arrows to explain the relationship or message.
 - Format: `A -->|"action / event"| B`
 - Avoid bare unlabeled arrows unless relationship is self-evident (parent→child hierarchy).
+- **Line breaks in node labels**: Use `<br/>` inside quoted labels — `\ n` is **not** reliably supported across renderers.
+  ```
+  ✅ CORRECT:  ZSS["ZeroMQ Subscriber<br/>(XSUB)"]
+  ❌ WRONG:    ZSS["ZeroMQ Subscriber\nXSUB"]
+  ```
+- **Edge labels cannot span multiple lines**: `-->|"line1\nline2"|` does NOT render as two lines. Keep edge labels to a single concise phrase.
 
 ### 4. State Diagrams (`stateDiagram-v2`)
 - Always define an explicit `[*]` initial state and `[*]` terminal state.
 - Annotate every transition with the triggering event: `StateA --> StateB : EventName`
 - Group compound states using `state "Label" { ... }` blocks when needed.
+- **NEVER** add a bare `[*] --> [*]` line — it creates an invalid self-loop on the terminal pseudo-state and breaks rendering.
+- **Notes syntax**: Use the multi-line block form only. Inline `note right of X : text` is **NOT supported** in `stateDiagram-v2` and will cause a parse error.
+  ```
+  ✅ CORRECT:
+  note right of StateName
+    annotation text
+  end note
+
+  ❌ WRONG (causes parse error):
+  note right of StateName : annotation text
+  ```
 
 ### 5. Sequence Diagrams (`sequenceDiagram`)
 - Declare all participants at the top with `participant` keyword.
 - Use `+` / `-` activation bars for request/response pairs.
 - Wrap async operations in `par` or `loop` blocks when applicable.
 - Include `Note over X,Y: description` for important domain rules or invariants.
+- **`\n` is NOT a line break** in `Note over` text or message labels. Keep them to a single line or split into two separate Note statements.
 
 ### 6. ER Diagrams (`erDiagram`)
 - Use standard crow's foot notation: `||--o{`, `}o--||`, etc.
@@ -89,6 +107,10 @@ Choose the diagram type based on intent:
 - [ ] All edges have labels (flowchart / state / sequence).
 - [ ] `subgraph` used for logical grouping (flowchart).
 - [ ] `[*]` initial and terminal states present (stateDiagram).
+- [ ] No bare `[*] --> [*]` line in stateDiagram-v2.
+- [ ] Notes in stateDiagram-v2 use block form (`note right of X` / `end note`), NOT inline colon form.
+- [ ] Node labels use `<br/>` for line breaks, NOT `\n`.
+- [ ] Edge labels (flowchart) and Note/message labels (sequence) are single-line.
 - [ ] All participants declared (sequenceDiagram).
 - [ ] Design Intent blockquote written after the diagram.
 - [ ] No more than 3 subgraph nesting levels.
