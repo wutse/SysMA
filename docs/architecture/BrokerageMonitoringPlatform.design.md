@@ -13,7 +13,6 @@
 
 | 項目                | 選定方案                             | 理由                                          |
 | ------------------- | ------------------------------------ | --------------------------------------------- |
-| **ZeroMQ 指令通道** | ROUTER/DEALER                        | 支援並發多系統指令，非阻塞 (FR-026)           |
 | **ORM**             | Dapper + SQLite Provider             | 輕量、直接 SQL 控制、無 migration overhead    |
 | **Cron 引擎**       | Quartz.NET                           | 成熟 .NET 排程框架，內建 Cron 解析 (FR-012)   |
 | **Email**           | System.Net.Mail                      | 無帳密 Mail Relay 場景，無需額外套件 (FR-010) |
@@ -48,13 +47,6 @@ graph LR
     EM["Email Notifier"]
   end
 
-  subgraph CC["Command Context"]
-    direction TB
-    CMD["CommandRecord AR"]
-    CD["CommandDispatcher"]
-    ZMQ_R["ZeroMQ ROUTER"]
-  end
-
   subgraph AHC["Aggregate Health Context"]
     direction TB
     HMD["HealthMonitorDefinition AR"]
@@ -80,14 +72,12 @@ graph LR
   MC -->|"ComponentStatusChanged"| AC
   MC -->|"ComponentStatusChanged"| AHC
   AC -->|"AlertAcknowledged"| MC
-  CC -->|"ManualCommandIssued"| AUDIT
-  CC -->|"ManualCommandIssued"| MC
   CFG -->|"ConfigurationUpdated"| MC
   AHC -->|"HealthNotificationSent"| NI
   MC -->|"StateChanged"| AUDIT
 ```
 
-> **Design Intent**: 六個 Bounded Context 各自擁有獨立的資料模型與職責。Monitoring Context 是核心，負責狀態機與失聯偵測；Alert Context 消費狀態變更事件並執行通知決策；Command Context 獨立維護 ZeroMQ 指令通道（BI-005）。
+> **Design Intent**: 五個 Bounded Context 各自擁有獨立的資料模型與職責。Monitoring Context 是核心，負責狀態機與失聯偵測；Alert Context 消費狀態變更事件並執行通知決策。
 
 ---
 
@@ -101,7 +91,6 @@ graph LR
 | `SystemId`            | `string` (PK)                      | 系統唯一識別碼          |
 | `Name`                | `string`                           | 顯示名稱                |
 | `MarketSession`       | `MarketSessionWindow` (VO)         | 盤中時段 (FR-029)       |
-| `CommandEndpoint`     | `string`                           | ZeroMQ DEALER 端點      |
 | `AlertRecipients`     | `IReadOnlyList<EmailAddress>` (VO) | 個別告警收件人 (FR-037) |
 | `IsMaintenanceActive` | `bool`                             | 維護模式 (FR-032)       |
 | `IsActive`            | `bool`                             | 是否停用                |
@@ -305,9 +294,7 @@ stateDiagram-v2
 | `AlertTriggered`                 | 狀態轉為 Lost/Error/Warning 且盤中       | PopupNotifier, EmailNotifier                                              |
 | `AlertAcknowledged`              | 維運人員操作 Acknowledge                 | AlertRecord, SignalR Hub                                                  |
 | `MaintenanceModeToggled`         | 維運人員操作                             | AlertSuppressor, AuditLogger, SignalR Hub                                 |
-| `ManualCommandIssued`            | 維運人員操作觸發/暫停/啟停               | CommandDispatcher, AuditLogger                                            |
-| `CommandResponseReceived`        | ZeroMQ DEALER 回應                       | CommandStatusTracker, SignalR Hub                                         |
-| `CommandTimedOut`                | 指令逾時未回應                           | SignalR Hub (顯示警告)                                                    |
+| `ComponentStateOverridden`       | 維運人員手動覆寫元件狀態                 | ComponentStateUpdater, AuditLogger, SignalR Hub                           |
 | `DailyExecutionCreated`          | DailyExecutionCreatorJob 批次建立或補建  | SignalR Hub (管理更新), ComponentStateUpdater (重置 ScheduledJob 至 Idle) |
 | `AggregateHealthDeadlineReached` | Quartz.NET Job 觸發（截止時間到達）      | HealthEvaluationService                                                   |
 | `DailyExecutionCompleted`        | 截止時間評估完成（Success / Failed）     | NotificationInbox, EmailNotifier, TeamsNotifier, SignalR Hub              |
@@ -355,8 +342,7 @@ BrokerageMonitor.sln
 │   │   │   ├── AlertTriggered.cs
 │   │   │   ├── AlertAcknowledged.cs
 │   │   │   ├── MaintenanceModeToggled.cs
-│   │   │   ├── ManualCommandIssued.cs
-│   │   │   ├── CommandResponseReceived.cs
+│   │   │   ├── ComponentStateOverridden.cs      ← 新增
 │   │   │   ├── DailyExecutionCreated.cs         ← 新增
 │   │   │   ├── DailyExecutionCompleted.cs       ← 新增
 │   │   │   ├── DailyExecutionMissed.cs          ← 新增
@@ -377,9 +363,9 @@ BrokerageMonitor.sln
 │   │   │   ├── Dashboard/
 │   │   │   │   ├── GetDashboardQuery.cs
 │   │   │   │   └── GetDashboardQueryHandler.cs
-│   │   │   ├── Commands/
-│   │   │   │   ├── IssueManualCommandCommand.cs
-│   │   │   │   └── IssueManualCommandHandler.cs
+│   │   │   ├── StateOverride/
+│   │   │   │   ├── OverrideComponentStateCommand.cs
+│   │   │   │   └── OverrideComponentStateHandler.cs
 │   │   │   ├── Alerts/
 │   │   │   │   ├── AcknowledgeAlertCommand.cs
 │   │   │   │   └── AcknowledgeAlertHandler.cs
@@ -400,8 +386,7 @@ BrokerageMonitor.sln
 │   │   │   ├── IHeartbeatProcessor.cs
 │   │   │   ├── IStateRollupService.cs
 │   │   │   ├── IAggregateHealthEvaluationService.cs
-│   │   │   ├── IDailyExecutionCreatorService.cs            ← 新增
-│   │   │   └── ICommandDispatcher.cs
+│   │   │   └── IDailyExecutionCreatorService.cs            ← 新增
 │   │   ├── Notifications/
 │   │   │   ├── IEmailNotificationService.cs
 │   │   │   ├── ITeamsNotificationService.cs
@@ -434,9 +419,7 @@ BrokerageMonitor.sln
 │   │   │       └── V001_InitialSchema.sql
 │   │   ├── ZeroMQ/
 │   │   │   ├── ZeroMQSubscriberService.cs      (XSUB, IHostedService)
-│   │   │   ├── ZeroMQCommandService.cs         (ROUTER, IHostedService)
-│   │   │   ├── HeartbeatMessageParser.cs
-│   │   │   └── CommandMessageSerializer.cs
+│   │   │   └── HeartbeatMessageParser.cs
 │   │   ├── Monitoring/
 │   │   │   ├── HeartbeatTimeoutMonitor.cs      (per-component Timer, IHostedService)
 │   │   │   └── DataRetentionService.cs         (Quartz job, 30-day cleanup)
@@ -508,12 +491,11 @@ graph LR
   OP -->|"Views dashboard & operates"| BMS
   MON -->|"Push heartbeat via ZeroMQ PUB"| ZB
   ZB -->|"Forward via XPUB → XSUB"| BMS
-  BMS -->|"Issue commands via ROUTER/DEALER"| MON
   BMS -->|"Send emails via SMTP"| MR
   BMS -->|"Send notifications via Webhook"| MST
 ```
 
-> **Design Intent**: 監控站台是唯一與 ZeroMQ Broker 互動的消費方；Adapter 服務在 Broker 上游，不在本系統範疇。指令通道直連被監控系統，繞過 Broker。
+> **Design Intent**: 監控站台是唯一與 ZeroMQ Broker 互動的消費方；Adapter 服務在 Broker 上游，不在本系統範疇。
 
 ---
 
@@ -544,7 +526,6 @@ graph TB
 
     subgraph INFRA["Infrastructure Layer"]
       ZSS["ZeroMQ Subscriber<br/>(XSUB, IHostedService)"]
-      ZCS["ZeroMQ Command<br/>(ROUTER, IHostedService)"]
       HTM["HeartbeatTimeout Monitor<br/>(per-component Timer)"]
       QTZ["Quartz.NET Scheduler<br/>(AggregateHealth + Retention Jobs)"]
       REPO["Dapper Repositories"]
@@ -578,7 +559,6 @@ graph TB
   AES --> EVT
   HBP --> EVT
   ZSS -->|"HeartbeatReceived event"| HBP
-  ZCS <-->|"ROUTER/DEALER"| MON
   HTM -->|"ComponentLost event"| AES
   QTZ -->|"AggregateHealthDeadlineReached"| AHE
   REPO --> DB
@@ -605,33 +585,22 @@ graph LR
   subgraph ZINFRA["Infrastructure / ZeroMQ"]
     ZSS["ZeroMQSubscriberService<br/>(XSUB Socket)<br/>IHostedService"]
     HBP["HeartbeatMessageParser<br/>(JSON → HeartbeatMessage DTO)"]
-    ZCS["ZeroMQCommandService<br/>(ROUTER Socket)<br/>IHostedService"]
-    CMS["CommandMessageSerializer<br/>(Command DTO → JSON Frame)"]
-    CST["CommandStatusTracker<br/>(in-memory pending dict)"]
   end
 
   subgraph APP["Application"]
     HBPA["IHeartbeatProcessor"]
-    ICD["ICommandDispatcher"]
   end
 
   subgraph EXT["External"]
     ZB["ZeroMQ Broker<br/>(XPUB)"]
-    MS["Monitored System<br/>(DEALER)"]
   end
 
   ZB -->|"multipart frame: [topic][json payload]"| ZSS
   ZSS -->|"raw frame"| HBP
   HBP -->|"HeartbeatMessage"| HBPA
-  ICD -->|"CommandRequest"| CMS
-  CMS -->|"[identity][json]"| ZCS
-  ZCS -->|"ROUTER frame"| MS
-  MS -->|"CommandResponse frame"| ZCS
-  ZCS -->|"response"| CST
-  CST -->|"CommandResponseReceived event"| APP
 ```
 
-> **Design Intent**: XSUB 訂閱通道與 ROUTER 指令通道完全分開 (BI-005)。CommandStatusTracker 以 in-memory `ConcurrentDictionary<CommandId, PendingCommand>` 追蹤指令狀態，搭配 `CancellationTokenSource` 實作逾時 (FR-027)。
+> **Design Intent**: 監控站台僅實作 XSUB 訂閱通道接收心跳。雙向指令與相關狀態追蹤均移至 Phase 2。
 
 ---
 
@@ -647,18 +616,17 @@ graph LR
 | `OnAlertTriggered`             | `AlertDto`                     | 盤中告警觸發 (FR-010)                       |
 | `OnAlertAcknowledged`          | `{ SystemId, AcknowledgedBy }` | Acknowledge 完成                            |
 | `OnMaintenanceModeChanged`     | `{ SystemId, IsActive }`       | 維護模式切換                                |
-| `OnCommandStatusChanged`       | `CommandStatusDto`             | 指令狀態更新 (FR-027)                       |
 | `OnHealthNotificationReceived` | `NotificationInboxItemDto`     | 彙整通知 Toast (FR-020)                     |
 | `OnDailyExecutionUpdated`      | `DailyExecutionDto`            | 每日執行實例狀態變更（建立/評估完成）← 新增 |
 
 #### Client → Server (Hub Invoke)
 
-| Hub Method              | 參數                           | 說明           |
-| ----------------------- | ------------------------------ | -------------- |
-| `SubscribeDashboard`    | `void`                         | 訂閱儀表板推送 |
-| `AcknowledgeAlert`      | `AcknowledgeAlertRequest`      | FR-018         |
-| `IssueCommand`          | `IssueCommandRequest`          | FR-005/006/007 |
-| `ToggleMaintenanceMode` | `ToggleMaintenanceModeRequest` | FR-032         |
+| Hub Method               | 參數                            | 說明           |
+| ------------------------ | ------------------------------- | -------------- |
+| `SubscribeDashboard`     | `void`                          | 訂閱儀表板推送 |
+| `AcknowledgeAlert`       | `AcknowledgeAlertRequest`       | FR-018         |
+| `OverrideComponentState` | `OverrideComponentStateRequest` | FR-005/006/007 |
+| `ToggleMaintenanceMode`  | `ToggleMaintenanceModeRequest`  | FR-032         |
 
 ---
 
@@ -705,17 +673,6 @@ public sealed record AlertDto(
     ComponentStatus AlertStatus,
     DateTimeOffset OccurredAt,
     bool IsAcknowledged
-);
-
-// Application/DTOs/CommandStatusDto.cs
-public sealed record CommandStatusDto(
-    Guid CommandId,
-    string SystemId,
-    string ComponentId,
-    CommandType Command,
-    CommandStatus Status,        // Sending | Acknowledged | Failed | TimedOut
-    string? ResponseMessage,
-    DateTimeOffset IssuedAt
 );
 
 // Application/DTOs/NotificationInboxItemDto.cs
@@ -799,13 +756,13 @@ public sealed record ExecutionHistoryDto(
 ### 4.3 Hub Request DTOs
 
 ```csharp
-// IssueCommandRequest
-public sealed record IssueCommandRequest(
+// OverrideComponentStateRequest
+public sealed record OverrideComponentStateRequest(
     string SystemId,
     string ComponentId,
-    CommandType Command,    // Trigger | Pause | Resume | Start | Stop
-    string OperatorName,   // from Session (FR-009)
-    string Reason          // BI-001: must not be empty
+    ComponentStatus NewStatus,  // Override target status
+    string OperatorName,        // from Session (FR-009)
+    string Reason               // BI-001: must not be empty
 );
 
 // AcknowledgeAlertRequest
@@ -989,17 +946,6 @@ public interface IDailyExecutionCreatorService
     Task RecoverTodayAsync(CancellationToken ct = default);
 }
 
-// Application/Services/ICommandDispatcher.cs
-public interface ICommandDispatcher
-{
-    /// <summary>
-    /// Dispatch a manual command via ZeroMQ ROUTER/DEALER.
-    /// Returns immediately; result is pushed via CommandResponseReceived event.
-    /// No auto-retry on timeout (FR-027, OI-022)
-    /// </summary>
-    Task<Guid> DispatchAsync(CommandRequest command, CancellationToken ct = default);
-}
-
 // Application/Notifications/IEmailNotificationService.cs
 public interface IEmailNotificationService
 {
@@ -1019,7 +965,6 @@ public interface IRealtimeNotificationService
     Task PushComponentStatusChangedAsync(ComponentStatusDto dto, CancellationToken ct = default);
     Task PushAlertTriggeredAsync(AlertDto dto, CancellationToken ct = default);
     Task PushAlertAcknowledgedAsync(string systemId, string acknowledgedBy, CancellationToken ct = default);
-    Task PushCommandStatusChangedAsync(CommandStatusDto dto, CancellationToken ct = default);
     Task PushHealthNotificationAsync(NotificationInboxItemDto dto, CancellationToken ct = default);
     Task PushDailyExecutionUpdatedAsync(DailyExecutionDto dto, CancellationToken ct = default);  // FR-046: real-time update for management page
 }
@@ -1080,36 +1025,6 @@ public sealed record MetricPayload(string Label, decimal Value);
 
 ---
 
-### 6.2 Command Message (Station ROUTER → Monitored System DEALER)
-
-ZeroMQ ROUTER frame: `[dealer_identity][empty][json_payload]`
-
-```json
-{
-  "commandId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "systemId": "WMM",
-  "componentId": "svc01",
-  "command": "Trigger | Pause | Resume | Start | Stop",
-  "issuedBy": "張三",
-  "issuedAt": "2026-04-17T08:30:00.000Z",
-  "reason": "排程提前觸發測試",
-  "timeoutSeconds": 30
-}
-```
-
-### 6.3 Command Response (Monitored System DEALER → Station ROUTER)
-
-```json
-{
-  "commandId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "status": "Acknowledged | Failed",
-  "message": "optional error detail",
-  "respondedAt": "2026-04-17T08:30:05.000Z"
-}
-```
-
----
-
 ## 7. Data Schema (SQLite + Dapper)
 
 > Schema 初始化於 `DatabaseInitializer.cs`，啟動時執行 `CREATE TABLE IF NOT EXISTS`，並設定 `PRAGMA journal_mode=WAL`。
@@ -1121,7 +1036,6 @@ CREATE TABLE IF NOT EXISTS MonitoredSystems (
     Name            TEXT NOT NULL,
     MarketStart     TEXT NOT NULL,          -- HH:mm
     MarketEnd       TEXT NOT NULL,          -- HH:mm
-    CommandEndpoint TEXT NOT NULL,
     AlertRecipients TEXT NOT NULL,          -- JSON array of email strings
     IsMaintenanceActive INTEGER NOT NULL DEFAULT 0,
     IsActive        INTEGER NOT NULL DEFAULT 1,
@@ -1280,8 +1194,6 @@ public sealed class TeamsWebhookException : Exception { ... }
 | --------------------------------- | --------------------------------------------------- |
 | `ERR_REASON_REQUIRED`             | 手動操作未提供理由 (BI-001)                         |
 | `ERR_SESSION_MISSING`             | Operator Session 姓名為空 (BI-009)                  |
-| `ERR_COMMAND_TIMEOUT`             | 指令逾時 (FR-027)                                   |
-| `ERR_COMMAND_FAILED`              | 被監控系統回應 Failed                               |
 | `ERR_ZMQ_DISCONNECTED`            | ZeroMQ Broker 連線中斷                              |
 | `ERR_EMAIL_DELIVERY`              | SMTP 發送失敗                                       |
 | `ERR_TEAMS_WEBHOOK`               | Teams Webhook 呼叫失敗                              |
@@ -1292,14 +1204,13 @@ public sealed class TeamsWebhookException : Exception { ... }
 
 ### 8.3 Failure Behavior
 
-| 失敗點             | 行為                                                       |
-| ------------------ | ---------------------------------------------------------- |
-| ZeroMQ Broker 斷線 | 自動重連（指數退避），重連前元件計時器仍運行               |
-| Email 發送失敗     | Log ERROR，不重試（避免重複通知），不影響主流程            |
-| Teams Webhook 失敗 | Log ERROR，不重試                                          |
-| SQLite 寫入失敗    | Log CRITICAL，狀態仍保持 in-memory，下次心跳補寫           |
-| Quartz Job 例外    | Quartz 記錄錯誤，下個週期重新觸發                          |
-| 指令逾時           | 觸發 `CommandTimedOut` 事件，顯示警告，不自動重試 (FR-027) |
+| 失敗點             | 行為                                             |
+| ------------------ | ------------------------------------------------ |
+| ZeroMQ Broker 斷線 | 自動重連（指數退避），重連前元件計時器仍運行     |
+| Email 發送失敗     | Log ERROR，不重試（避免重複通知），不影響主流程  |
+| Teams Webhook 失敗 | Log ERROR，不重試                                |
+| SQLite 寫入失敗    | Log CRITICAL，狀態仍保持 in-memory，下次心跳補寫 |
+| Quartz Job 例外    | Quartz 記錄錯誤，下個週期重新觸發                |
 
 ### 8.4 Blazor UI 錯誤處理
 
@@ -1330,7 +1241,7 @@ public sealed class TeamsWebhookException : Exception { ... }
 | XSS 防範           | Blazor Server 內建 HTML encode，`MarkupString` 僅用於已知安全內容               |
 | 敏感資料           | SMTP Host/Port 存 appsettings.json；Teams Webhook URL 存 SQLite（非直接暴露）   |
 | ZeroMQ 通道        | 內網部署，無 TLS（Phase 1）；Phase 2 可評估 CurveZMQ                            |
-| 指令驗證           | 所有 Hub Invoke 強制驗證 `OperatorName` 非空 (BI-009) 及 `Reason` 非空 (BI-001) |
+| 操作驗證           | 所有 Hub Invoke 強制驗證 `OperatorName` 非空 (BI-009) 及 `Reason` 非空 (BI-001) |
 
 ### 9.3 Scalability
 
@@ -1354,8 +1265,8 @@ public sealed class TeamsWebhookException : Exception { ... }
 | ------------- | -------------------------------------------------------------------------------------------------------- |
 | 日誌框架      | Serilog（結構化）→ Console + Rolling File Sink                                                           |
 | 日誌等級      | DEBUG（開發）/ INFO（生產正常）/ WARNING（可恢復問題）/ ERROR（通知失敗、斷線）/ CRITICAL（DB 寫入失敗） |
-| 關聯 ID       | 每個 Manual Command 帶 `CommandId (GUID)` 貫穿整個指令生命週期                                           |
-| 關鍵 Log 事件 | 心跳收訊、狀態變更、告警觸發/確認、指令發送/回應/逾時、Health Rule 評估結果                              |
+| 關聯 ID       | 每個人工操作請求及通知發送皆帶上唯一 `OperationId (GUID)` 或 `TraceId` 貫穿流程                          |
+| 關鍵 Log 事件 | 心跳收訊、狀態變更、手動狀態覆寫、告警觸發/確認、Health Rule 評估結果                                    |
 | 稽核日誌      | 所有人工操作持久化至 SQLite `AuditLogs`（不依賴 Log 檔案）                                               |
 
 ---
@@ -1508,7 +1419,6 @@ builder.Services.AddSingleton<IDbConnectionFactory, SqliteConnectionFactory>();
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddHostedService<AppSettingsImporter>();   // FR-031 initial import
 builder.Services.AddHostedService<ZeroMQSubscriberService>();
-builder.Services.AddHostedService<ZeroMQCommandService>();
 builder.Services.AddHostedService<HeartbeatTimeoutMonitor>();
 builder.Services.AddHostedService<DailyExecutionStartupRecovery>(); // FR-044: recover today's instances ← 新增
 
@@ -1542,7 +1452,6 @@ builder.Services.AddSingleton<IStateRollupService, StateRollupService>();
 builder.Services.AddScoped<IAlertEvaluationService, AlertEvaluationService>();
 builder.Services.AddScoped<IAggregateHealthEvaluationService, AggregateHealthEvaluationService>();
 builder.Services.AddScoped<IDailyExecutionCreatorService, DailyExecutionCreatorService>();          // ← 新增
-builder.Services.AddScoped<ICommandDispatcher, ZeroMQCommandDispatcher>();
 
 // Notifications
 builder.Services.AddScoped<IEmailNotificationService, SmtpEmailNotificationService>();
