@@ -1,5 +1,5 @@
 ---
-name: git-workitem-branch
+name: git-workitem-flow
 description: 'Manage Git branches by WorkItemID from a Scrum backlog CSV, ensuring parent branches exist before child branches, developing in order, committing per item, and merging to parent on completion'
 ---
 
@@ -13,11 +13,11 @@ Map each WorkItemID to a branch name using lowercase kebab-case:
 
 | WorkItemID | Branch Name         |
 | ---------- | ------------------- |
-| `EP-001`   | `ep/ep-001`         |
-| `US-001`   | `us/us-001`         |
+| `EP-001`   | `ep-001`         |
+| `US-001`   | `us-001`         |
 
-- Epic branches: `ep/{id}` — branched from `arch` (or the project integration branch)
-- Story branches: `us/{id}` — branched from their parent Epic branch `ep/{parent-id}`
+- Epic branches: `{id}` — branched from `arch` (or the project integration branch)
+- Story branches: `{id}` — branched from their parent Epic branch `{parent-id}`
 
 ## Step-by-Step Workflow
 
@@ -26,7 +26,7 @@ Map each WorkItemID to a branch name using lowercase kebab-case:
 Before creating any branch, check whether its parent branch already exists:
 
 ```powershell
-git branch --list "ep/{parent-id}"
+git branch --list "{parent-id}"
 ```
 
 - If the parent branch **does not exist**, create it first (recursively apply this same workflow for the parent).
@@ -37,15 +37,15 @@ git branch --list "ep/{parent-id}"
 Switch to the parent branch and create the work item branch from it:
 
 ```powershell
-git checkout ep/{parent-id}
-git checkout -b us/{id}
+git checkout {parent-id}
+git checkout -b {id}
 ```
 
 For Epic branches, create from the project integration branch (e.g., `arch`):
 
 ```powershell
 git checkout arch
-git checkout -b ep/{id}
+git checkout -b {id}
 ```
 
 ### Step 3 — Implement in Order
@@ -81,8 +81,8 @@ Commit message conventions:
 Once all Story branches under an Epic are committed, merge them into the Epic branch in order:
 
 ```powershell
-git checkout ep/{parent-id}
-git merge --no-ff us/{id} -m "merge(ep-{parent-id}): integrate us/{id} - {Title}"
+git checkout {parent-id}
+git merge --no-ff {id} -m "merge({parent-id}): integrate {id} - {Title}"
 ```
 
 Use `--no-ff` to preserve branch history.
@@ -91,7 +91,7 @@ After all Epics under the integration branch are merged:
 
 ```powershell
 git checkout arch
-git merge --no-ff ep/{id} -m "merge(arch): integrate ep/{id} - {EpicTitle}"
+git merge --no-ff {id} -m "merge(arch): integrate {id} - {EpicTitle}"
 ```
 
 ## Decision Rules
@@ -124,11 +124,11 @@ Given backlog rows: `EP-001 → US-001, US-002, US-003`:
 ```powershell
 # 1. Create Epic branch
 git checkout arch
-git checkout -b ep/ep-001
+git checkout -b ep-001
 
 # 2. Create first Story branch
-git checkout ep/ep-001
-git checkout -b us/us-001
+git checkout ep-001
+git checkout -b us-001
 
 # 3. Implement US-001, then commit
 git add -A
@@ -139,14 +139,14 @@ git commit -m "feat(us-001): establish solution architecture and project referen
 - FR references: N/A"
 
 # 4. Merge US-001 back to EP-001
-git checkout ep/ep-001
-git merge --no-ff us/us-001 -m "merge(ep-001): integrate us/us-001 - Solution Architecture"
+git checkout ep-001
+git merge --no-ff us-001 -m "merge(ep-001): integrate us-001 - Solution Architecture"
 
 # 5. Create next Story branch from EP-001
-git checkout -b us/us-002
+git checkout -b us-002
 # ... implement and commit ...
 
 # 6. After all stories done, merge EP-001 to arch
 git checkout arch
-git merge --no-ff ep/ep-001 -m "merge(arch): integrate ep/ep-001 - Project Foundation"
+git merge --no-ff ep-001 -m "merge(arch): integrate ep-001 - Project Foundation"
 ```
