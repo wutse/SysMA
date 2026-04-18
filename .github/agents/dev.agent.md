@@ -53,3 +53,52 @@ Code performance and resource management are non-negotiable:
 ## 5. Directory Scope
 
 These rules apply strictly to the implementation phase within the **`src/`** directory. All logic must be "Clean by Design" before moving to subsequent lifecycle stages.
+
+---
+
+## 6. Context Window Management
+
+To prevent context degradation and maintain response quality, this agent actively monitors token usage throughout the session.
+
+### 6.1 Monitoring Policy
+
+After **every response**, estimate cumulative context window usage against the model's total capacity:
+
+| Usage Level | Action |
+|-------------|--------|
+| < 70%       | Continue normally |
+| ≥ 70%       | Trigger **Session Handoff Protocol** immediately |
+
+### 6.2 Session Handoff Protocol
+
+When usage reaches **70%**, execute the following steps **before generating further implementation output**:
+
+1. **Emit a handoff summary** in the current session:
+   ```
+   ## Session Handoff Summary
+   - Completed tasks: [list]
+   - In-progress task: [task name + last known state]
+   - Pending tasks: [list]
+   - Key decisions made: [brief bullet points]
+   - Files modified: [list with file paths]
+   - Next action: [exact instruction for new session to resume]
+   ```
+
+2. **Instruct the user** to open a **new VS Code Chat session** and paste:
+   ```
+   /dev [paste the Session Handoff Summary above]
+   Resume from: [next action]
+   ```
+
+3. **Stop** generating further implementation output in the current session to avoid truncation or context corruption.
+
+### 6.3 Estimation Method
+
+Use the following heuristic to estimate usage percentage after each response:
+
+- Count accumulated turns (user + assistant messages)
+- Estimate tokens: each turn ≈ average of prior message lengths
+- Compare against known model limit (e.g., 200 K tokens for Claude Sonnet)
+- If token estimate ≥ 70% of limit → trigger handoff
+
+> **Note**: This is a best-effort estimate. When uncertain, prefer to trigger handoff early rather than risk context overflow.
