@@ -10,44 +10,44 @@ namespace BrokerageMonitor.Infrastructure.Persistence;
 /// </summary>
 public sealed class DatabaseInitializer
 {
-    private readonly IDbConnectionFactory _connectionFactory;
-    private readonly ILogger<DatabaseInitializer> _logger;
+  private readonly IDbConnectionFactory _connectionFactory;
+  private readonly ILogger<DatabaseInitializer> _logger;
 
-    public DatabaseInitializer(
-        IDbConnectionFactory connectionFactory,
-        ILogger<DatabaseInitializer> logger)
-    {
-        _connectionFactory = connectionFactory;
-        _logger = logger;
-    }
+  public DatabaseInitializer(
+      IDbConnectionFactory connectionFactory,
+      ILogger<DatabaseInitializer> logger)
+  {
+    _connectionFactory = connectionFactory;
+    _logger = logger;
+  }
 
-    /// <summary>
-    /// Executes WAL pragma and creates schema tables.
-    /// Safe to call on every startup; all DDL uses IF NOT EXISTS.
-    /// </summary>
-    /// <param name="cancellationToken">Propagated cancellation token.</param>
-    public async Task InitialiseAsync(CancellationToken cancellationToken = default)
-    {
-        _logger.LogInformation("DatabaseInitializer: beginning schema initialisation.");
+  /// <summary>
+  /// Executes WAL pragma and creates schema tables.
+  /// Safe to call on every startup; all DDL uses IF NOT EXISTS.
+  /// </summary>
+  /// <param name="cancellationToken">Propagated cancellation token.</param>
+  public async Task InitialiseAsync(CancellationToken cancellationToken = default)
+  {
+    _logger.LogInformation("DatabaseInitializer: beginning schema initialisation.");
 
-        using var connection = _connectionFactory.CreateConnection();
-        connection.Open();
+    using var connection = _connectionFactory.CreateConnection();
+    connection.Open();
 
-        // Enable Write-Ahead Logging for concurrent read/write performance
-        await ExecuteAsync(connection, "PRAGMA journal_mode=WAL;", cancellationToken);
+    // Enable Write-Ahead Logging for concurrent read/write performance
+    await ExecuteAsync(connection, "PRAGMA journal_mode=WAL;", cancellationToken);
 
-        _logger.LogInformation("DatabaseInitializer: schema initialisation completed successfully.");
-    }
+    _logger.LogInformation("DatabaseInitializer: schema initialisation completed successfully.");
+  }
 
-    private static Task ExecuteAsync(
-        System.Data.IDbConnection connection,
-        string sql,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = sql;
-        cmd.ExecuteNonQuery();
-        return Task.CompletedTask;
-    }
+  private static Task ExecuteAsync(
+      System.Data.IDbConnection connection,
+      string sql,
+      CancellationToken cancellationToken)
+  {
+    cancellationToken.ThrowIfCancellationRequested();
+    using var cmd = connection.CreateCommand();
+    cmd.CommandText = sql;
+    cmd.ExecuteNonQuery();
+    return Task.CompletedTask;
+  }
 }

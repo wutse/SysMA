@@ -108,7 +108,7 @@ git merge --no-ff {id} -m "merge(arch): integrate {id} - {EpicTitle}"
 ## Quality Checklist
 
 - [ ] Parent branch exists before creating child branch
-- [ ] Branch name matches convention (`ep/` or `us/` prefix + lowercase ID)
+- [ ] Branch name matches convention (lowercase ID)
 - [ ] Work items processed in CSV order (by WorkItemId)
 - [ ] Each commit is scoped to exactly one work item
 - [ ] Commit message references WorkItemId, Title, and FRReference

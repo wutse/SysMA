@@ -7,9 +7,9 @@ namespace BrokerageMonitor.Infrastructure.Persistence;
 /// </summary>
 public interface IDbConnectionFactory
 {
-    /// <summary>
-    /// Creates and returns a new, unopened database connection.
-    /// The caller is responsible for opening and disposing the connection.
-    /// </summary>
-    IDbConnection CreateConnection();
+  /// <summary>
+  /// Creates and returns a new, unopened database connection.
+  /// The caller is responsible for opening and disposing the connection.
+  /// </summary>
+  IDbConnection CreateConnection();
 }

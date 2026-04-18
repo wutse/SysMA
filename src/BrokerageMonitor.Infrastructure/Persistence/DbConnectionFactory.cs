@@ -11,25 +11,25 @@ namespace BrokerageMonitor.Infrastructure.Persistence;
 /// </summary>
 public sealed class DbConnectionFactory : IDbConnectionFactory
 {
-    private readonly string _connectionString;
+  private readonly string _connectionString;
 
-    /// <summary>
-    /// Initialises the factory from the "ConnectionStrings:BrokerageMonitor" entry
-    /// in <paramref name="configuration"/>.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the connection string is missing or empty.
-    /// </exception>
-    public DbConnectionFactory(IConfiguration configuration)
-    {
-        _connectionString = configuration.GetConnectionString("BrokerageMonitor")
-            ?? throw new InvalidOperationException(
-                "Connection string 'BrokerageMonitor' is not configured in appsettings.json.");
-    }
+  /// <summary>
+  /// Initialises the factory from the "ConnectionStrings:BrokerageMonitor" entry
+  /// in <paramref name="configuration"/>.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">
+  /// Thrown when the connection string is missing or empty.
+  /// </exception>
+  public DbConnectionFactory(IConfiguration configuration)
+  {
+    _connectionString = configuration.GetConnectionString("BrokerageMonitor")
+        ?? throw new InvalidOperationException(
+            "Connection string 'BrokerageMonitor' is not configured in appsettings.json.");
+  }
 
-    /// <inheritdoc />
-    public IDbConnection CreateConnection()
-    {
-        return new SqliteConnection(_connectionString);
-    }
+  /// <inheritdoc />
+  public IDbConnection CreateConnection()
+  {
+    return new SqliteConnection(_connectionString);
+  }
 }
