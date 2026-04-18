@@ -1,9 +1,10 @@
 # 券商內部系統排程與服務監控站台 — Architecture Design
 
 > **建立日期**: 2026-04-17
-> **版本**: v1.1
+> **最後更新**: 2026-04-18
+> **版本**: v1.3
 > **狀態**: Draft
-> **對應需求**: `docs/analysis/BrokerageMonitoringPlatform.requirements.md` (v1.5)
+> **對應需求**: `docs/analysis/BrokerageMonitoringPlatform.requirements.md` (v1.9)
 > **設計師**: System Architect
 
 ---
@@ -129,7 +130,7 @@ graph LR
 | 成員                  | 類型                               | 說明                |
 | --------------------- | ---------------------------------- | ------------------- |
 | `ComponentId`         | `string` (FK)                      |                     |
-| `Status`              | `ComponentStatus` (Enum)           | 七種狀態            |
+| `Status`              | `ComponentStatus` (Enum)           | 八種狀態            |
 | `LastHeartbeatAt`     | `DateTimeOffset?`                  | 最後心跳時間        |
 | `LastStatusChangedAt` | `DateTimeOffset`                   | 狀態變更時間        |
 | `SubIndicators`       | `IReadOnlyList<SubIndicator>` (VO) | 子指標快照 (FR-039) |
@@ -208,14 +209,14 @@ graph LR
 
 #### Value Objects（新增 / 更新）
 
-| VO                    | 欄位                                                               | 說明                                  |
-| --------------------- | ------------------------------------------------------------------ | ------------------------------------- |
-| `MarketSessionWindow` | `StartTime: TimeOnly`, `EndTime: TimeOnly`                         | 盤中時段                              |
-| `EmailAddress`        | `Value: string`                                                    | 含格式驗證                            |
-| `SubIndicator`        | `Name`, `Status (Normal/Error)`, `Metric: MetricValue?`            | FR-039                                |
-| `MetricValue`         | `Label: string`, `Value: decimal`                                  | 數值指標                              |
-| `HealthRuleSchedule`  | `ScheduleType`, `CronExpression: string?`, `DayOfWeek: DayOfWeek?` |                                       |
-| `WatchedComponent`    | `ComponentId: string`, `ComponentType: ComponentType`              | **新增**；Definition 監控元件清單項目 |
+| VO                    | 欄位                                                                                             | 說明                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------- |
+| `MarketSessionWindow` | `StartTime: TimeOnly`, `EndTime: TimeOnly`                                                       | 盤中時段                              |
+| `EmailAddress`        | `Value: string`                                                                                  | 含格式驗證                            |
+| `SubIndicator`        | `Name`, `Status (Normal/Error)`, `Metric: MetricValue?`                                          | FR-039                                |
+| `MetricValue`         | `Label: string`, `Value: decimal`                                                                | 數值指標                              |
+| `HealthRuleSchedule`  | `ScheduleType`, `CronExpression: string?`, `DayOfWeek: DayOfWeek?` (含 `IsMatch(DateOnly)` 邏輯) |                                       |
+| `WatchedComponent`    | `ComponentId: string`, `ComponentType: ComponentType`                                            | **新增**；Definition 監控元件清單項目 |
 
 ---
 
@@ -228,24 +229,42 @@ stateDiagram-v2
 
   Unknown --> Normal : HeartbeatReceived (status=Normal)
   Unknown --> Lost : HeartbeatTimeout
+  Unknown --> Running : HeartbeatReceived (status=Running, ScheduledJob)
+  Unknown --> Idle : HeartbeatReceived (status=Idle, ScheduledJob)
+  Unknown --> Stopped : HeartbeatReceived (status=Stopped)
 
   Normal --> Error : HeartbeatReceived (status=Error)
   Normal --> Warning : HeartbeatReceived (status=Warning)
   Normal --> Lost : HeartbeatTimeout (Service only)
   Normal --> Idle : HeartbeatReceived (status=Idle, ScheduledJob)
+  Normal --> Stopped : HeartbeatReceived (status=Stopped)
   Normal --> Maintenance : MaintenanceModeEnabled
 
   Error --> Normal : HeartbeatReceived (status=Normal)
   Error --> Lost : HeartbeatTimeout (Service only)
   Error --> Maintenance : MaintenanceModeEnabled
+  Error --> Running : HeartbeatReceived (status=Running, ScheduledJob)
+  Error --> Idle : HeartbeatReceived (status=Idle, ScheduledJob)
+  Error --> Stopped : HeartbeatReceived (status=Stopped)
 
   Warning --> Normal : HeartbeatReceived (status=Normal)
   Warning --> Error : HeartbeatReceived (status=Error)
   Warning --> Lost : HeartbeatTimeout (Service only)
   Warning --> Maintenance : MaintenanceModeEnabled
+  Warning --> Running : HeartbeatReceived (status=Running, ScheduledJob)
+  Warning --> Idle : HeartbeatReceived (status=Idle, ScheduledJob) / DailyReset
+  Warning --> Stopped : HeartbeatReceived (status=Stopped)
 
   Lost --> Normal : HeartbeatReceived (status=Normal) + AcknowledgeRequired
+  Lost --> Running : HeartbeatReceived (status=Running, ScheduledJob) + AcknowledgeRequired
+  Lost --> Idle : HeartbeatReceived (status=Idle, ScheduledJob) + AcknowledgeRequired
+  Lost --> Stopped : HeartbeatReceived (status=Stopped) + AcknowledgeRequired
   Lost --> Maintenance : MaintenanceModeEnabled
+
+  Stopped --> Normal : HeartbeatReceived (status=Normal)
+  Stopped --> Error : HeartbeatReceived (status=Error)
+  Stopped --> Warning : HeartbeatReceived (status=Warning)
+  Stopped --> Maintenance : MaintenanceModeEnabled
 
   Idle --> Running : HeartbeatReceived (status=Running)
   Idle --> Maintenance : MaintenanceModeEnabled
@@ -255,8 +274,8 @@ stateDiagram-v2
   Running --> Failed : HeartbeatReceived (status=Failed)
   Running --> Lost : HeartbeatTimeout (Running window only, BI-011)
 
-  Completed --> Idle : NextScheduleTick
-  Failed --> Idle : NextScheduleTick
+  Completed --> Idle : NextScheduleTick / DailyReset
+  Failed --> Idle : NextScheduleTick / DailyReset
   Running --> Warning : StationRestart (ScheduledJob, execution result undetermined — manual inspection required)
 
   Maintenance --> Unknown : MaintenanceModeDisabled
@@ -264,6 +283,7 @@ stateDiagram-v2
   note right of Lost
     FR-003 / BI-011
     ScheduledJob: Lost only in Running state
+    Service: Lost applies except in Stopped state
   end note
   note right of Running
     FR-038
@@ -271,28 +291,28 @@ stateDiagram-v2
   end note
 ```
 
-> **Design Intent**: 將 Service 與 ScheduledJob 的 Lost 判定差異明確編入狀態機 (FR-003, FR-028, BI-011)。Service 元件的心跳計時器從最後一次心跳起算，無論當前狀態為 Normal、Warning 或 Error，超時均轉為 Lost 並觸發告警；Lost 恢復後一律需人工 Acknowledge 清除全域告警標記（FR-019）。ScheduledJob 的計時器（最大允許執行時間）僅在進入 Running 狀態時啟動，收到 Completed / Failed 即取消；站台重啟時若最後狀態為 Running，因執行結果未知，立即轉為 Warning 並觸發告警要求人工確認（FR-033），不重啟計時器。維護模式從任何狀態均可進入，退出後重置為 Unknown 等待下次心跳。
+> **Design Intent**: 將 Service 與 ScheduledJob 的 Lost 判定差異明確編入狀態機 (FR-003, FR-028, BI-011)。Service 元件一旦進入 Stopped 狀態（經由回報或心跳帶 Stopped），不適用心跳超時（豁免），避免手動停機後出現 Lost 誤報。其餘狀態的 Service 心跳計時器從最後一次心跳起算，無論當前狀態為 Normal、Warning 或 Error，超時均轉為 Lost 並觸發告警；Lost 恢復後一律需人工 Acknowledge 清除全域告警標記（FR-019）。ScheduledJob 的計時器（最大允許執行時間）僅在進入 Running 狀態時啟動，收到 Completed / Failed 即取消；站台重啟時若最後狀態為 Running，因執行結果未知，立即轉為 Warning 並觸發告警要求人工確認（FR-033），不重啟計時器。維護模式從任何狀態均可進入，退出後重置為 Unknown 等待下次心跳。
 
 ---
 
 ### 1.4 Domain Events
 
-| 事件                             | 觸發條件                                 | 訂閱方                                                                   |
-| -------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------ |
-| `ComponentHeartbeatReceived`     | 收到 ZeroMQ 訂閱訊息                     | MonitoringService, HeartbeatTimeoutMonitor                               |
-| `ComponentStatusChanged`         | 狀態機轉換                               | AlertEvaluationService, AggregateHealthContext, SignalR Hub, AuditLogger |
-| `ComponentLost`                  | 心跳計時器逾時                           | AlertEvaluationService, SignalR Hub                                      |
-| `AlertTriggered`                 | 狀態轉為 Lost/Error/Warning 且盤中       | PopupNotifier, EmailNotifier                                             |
-| `AlertAcknowledged`              | 維運人員操作 Acknowledge                 | AlertRecord, SignalR Hub                                                 |
-| `MaintenanceModeToggled`         | 維運人員操作                             | AlertSuppressor, AuditLogger, SignalR Hub                                |
-| `ManualCommandIssued`            | 維運人員操作觸發/暫停/啟停               | CommandDispatcher, AuditLogger                                           |
-| `CommandResponseReceived`        | ZeroMQ DEALER 回應                       | CommandStatusTracker, SignalR Hub                                        |
-| `CommandTimedOut`                | 指令逾時未回應                           | SignalR Hub (顯示警告)                                                   |
-| `DailyExecutionCreated`          | DailyExecutionCreatorJob 批次建立或補建  | SignalR Hub (管理頁面更新)                                               |
-| `AggregateHealthDeadlineReached` | Quartz.NET Job 觸發（截止時間到達）      | HealthEvaluationService                                                  |
-| `DailyExecutionCompleted`        | 截止時間評估完成（Success / Failed）     | NotificationInbox, EmailNotifier, TeamsNotifier, SignalR Hub             |
-| `DailyExecutionMissed`           | 站台重啟後截止時間已過，補建 Missed 實例 | NotificationInbox, SignalR Hub                                           |
-| `HealthNotificationSent`         | 彙整通知發出                             | NotificationInbox, SignalR Hub (Toast)                                   |
+| 事件                             | 觸發條件                                 | 訂閱方                                                                    |
+| -------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------- |
+| `ComponentHeartbeatReceived`     | 收到 ZeroMQ 訂閱訊息                     | MonitoringService, HeartbeatTimeoutMonitor                                |
+| `ComponentStatusChanged`         | 狀態機轉換 (含子指標造成的卷積升/降級)   | AlertEvaluationService, AggregateHealthContext, SignalR Hub, AuditLogger  |
+| `ComponentLost`                  | 心跳計時器逾時                           | AlertEvaluationService, SignalR Hub                                       |
+| `AlertTriggered`                 | 狀態轉為 Lost/Error/Warning 且盤中       | PopupNotifier, EmailNotifier                                              |
+| `AlertAcknowledged`              | 維運人員操作 Acknowledge                 | AlertRecord, SignalR Hub                                                  |
+| `MaintenanceModeToggled`         | 維運人員操作                             | AlertSuppressor, AuditLogger, SignalR Hub                                 |
+| `ManualCommandIssued`            | 維運人員操作觸發/暫停/啟停               | CommandDispatcher, AuditLogger                                            |
+| `CommandResponseReceived`        | ZeroMQ DEALER 回應                       | CommandStatusTracker, SignalR Hub                                         |
+| `CommandTimedOut`                | 指令逾時未回應                           | SignalR Hub (顯示警告)                                                    |
+| `DailyExecutionCreated`          | DailyExecutionCreatorJob 批次建立或補建  | SignalR Hub (管理更新), ComponentStateUpdater (重置 ScheduledJob 至 Idle) |
+| `AggregateHealthDeadlineReached` | Quartz.NET Job 觸發（截止時間到達）      | HealthEvaluationService                                                   |
+| `DailyExecutionCompleted`        | 截止時間評估完成（Success / Failed）     | NotificationInbox, EmailNotifier, TeamsNotifier, SignalR Hub              |
+| `DailyExecutionMissed`           | 站台重啟後截止時間已過，補建 Missed 實例 | NotificationInbox, SignalR Hub                                            |
+| `HealthNotificationSent`         | 彙整通知發出                             | NotificationInbox, SignalR Hub (Toast)                                    |
 
 ---
 
@@ -909,8 +929,10 @@ public interface INotificationInboxRepository
 public interface IHeartbeatProcessor
 {
     /// <summary>
-    /// Process incoming ZeroMQ heartbeat message and update component state.
-    /// Raises ComponentStatusChanged / ComponentHeartbeatReceived domain events.
+    /// Process incoming ZeroMQ heartbeat/status message and update component state.
+    /// Messages are expected to arrive both periodically (Keep-alive) AND immediately upon event-driven anomalies (FR-002).
+    /// Computes the sub-indicator worst-case rollup to determine final status.
+    /// Raises ComponentStatusChanged (if rolled-up status changes) / ComponentHeartbeatReceived domain events.
     /// </summary>
     Task ProcessAsync(HeartbeatMessage message, CancellationToken ct = default);
 }
@@ -920,7 +942,7 @@ public interface IStateRollupService
 {
     /// <summary>
     /// Compute Worst-case roll-up status for a system from its active components.
-    /// Severity order: Lost > Error > Warning > Unknown > Idle > Normal (FR-001)
+    /// Severity order: Lost > Error > Warning > Unknown > Stopped > Idle > Normal (FR-001)
     /// </summary>
     ComponentStatus ComputeSystemStatus(IEnumerable<ComponentStatus> componentStatuses);
 }
@@ -953,14 +975,15 @@ public interface IAggregateHealthEvaluationService
 public interface IDailyExecutionCreatorService
 {
     /// <summary>
-    /// Batch-create DailyExecution instances for all active definitions for the given date (FR-042).
-    /// Skips definitions that already have an instance for the date (BI-012).
+    /// Batch-create DailyExecution instances for all active definitions matching the given date's schedule (FR-042, BI-015).
+    /// Skips definitions that already have an instance for the date (BI-012) or do not match the schedule.
     /// Called by DailyExecutionCreatorJob at DailyExecutionCreateTime (e.g., 05:30).
+    /// Additionally resets the real-time state of all associated ScheduledJob components to Idle (FR-042 附註).
     /// </summary>
     Task CreateForDateAsync(DateOnly date, CancellationToken ct = default);
 
     /// <summary>
-    /// On station startup: create missing instances for today (FR-044).
+    /// On station startup: create missing instances for today if the schedule matches (FR-044, BI-015).
     /// If deadline has not passed → create InProgress; if deadline passed → create Missed.
     /// </summary>
     Task RecoverTodayAsync(CancellationToken ct = default);
