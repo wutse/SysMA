@@ -1298,7 +1298,7 @@ public sealed class TeamsWebhookException : Exception { ... }
 
 | 項目          | 設計                                                                                                     |
 | ------------- | -------------------------------------------------------------------------------------------------------- |
-| 日誌框架      | Serilog（結構化）→ Console + Rolling File Sink                                                           |
+| 日誌框架      | NLog（結構化）→ Console + Rolling File Target                                                            |
 | 日誌等級      | DEBUG（開發）/ INFO（生產正常）/ WARNING（可恢復問題）/ ERROR（通知失敗、斷線）/ CRITICAL（DB 寫入失敗） |
 | 關聯 ID       | 每個人工操作請求及通知發送皆帶上唯一 `OperationId (GUID)` 或 `TraceId` 貫穿流程                          |
 | 關鍵 Log 事件 | 心跳收訊、狀態變更、手動狀態覆寫、告警觸發/確認、Health Rule 評估結果                                    |
@@ -1467,11 +1467,14 @@ sequenceDiagram
     "DailyExecutionCreateTime": "05:30",
     "DataRetentionDays": 30
   },
-  "Serilog": {
-    "MinimumLevel": { "Default": "Information" },
-    "WriteTo": [
-      { "Name": "Console" },
-      { "Name": "File", "Args": { "path": "logs/monitor-.log", "rollingInterval": "Day" } }
+  "NLog": {
+    "throwConfigExceptions": true,
+    "targets": {
+      "console": { "type": "Console" },
+      "file": { "type": "File", "fileName": "logs/monitor-${shortdate}.log", "archiveEvery": "Day", "maxArchiveFiles": 30 }
+    },
+    "rules": [
+      { "logger": "*", "minLevel": "Info", "writeTo": "console,file" }
     ]
   }
 }
