@@ -190,6 +190,7 @@ graph LR
 **業務不變式**:
 - 一旦進入終態（Success / Failed / Missed / Exempted）不得再被覆寫 (BI-013)
 - 補建邏輯呼叫前須先查詢是否已存在 (BI-012)
+- `Failed` 狀態反映客觀評估結果，與 `SendOnFailure` 無關；`SendOnFailure` 僅控制外部通知（Email / Teams）是否發送，Inbox 寫入一律執行 (FR-014, FR-020)
 
 #### Aggregate Root: `NotificationInboxItem`
 > 對應 FR-015, FR-020, FR-024
@@ -235,10 +236,12 @@ stateDiagram-v2
   Normal --> Maintenance : MaintenanceModeEnabled
 
   Error --> Normal : HeartbeatReceived (status=Normal)
+  Error --> Lost : HeartbeatTimeout (Service only)
   Error --> Maintenance : MaintenanceModeEnabled
 
   Warning --> Normal : HeartbeatReceived (status=Normal)
   Warning --> Error : HeartbeatReceived (status=Error)
+  Warning --> Lost : HeartbeatTimeout (Service only)
   Warning --> Maintenance : MaintenanceModeEnabled
 
   Lost --> Normal : HeartbeatReceived (status=Normal) + AcknowledgeRequired
@@ -254,6 +257,7 @@ stateDiagram-v2
 
   Completed --> Idle : NextScheduleTick
   Failed --> Idle : NextScheduleTick
+  Running --> Warning : StationRestart (ScheduledJob, execution result undetermined — manual inspection required)
 
   Maintenance --> Unknown : MaintenanceModeDisabled
 
@@ -267,7 +271,7 @@ stateDiagram-v2
   end note
 ```
 
-> **Design Intent**: 將 Service 與 ScheduledJob 的 Lost 判定差異明確編入狀態機 (FR-003, FR-028, BI-011)。維護模式從任何狀態均可進入，退出後重置為 Unknown 等待下次心跳。
+> **Design Intent**: 將 Service 與 ScheduledJob 的 Lost 判定差異明確編入狀態機 (FR-003, FR-028, BI-011)。Service 元件的心跳計時器從最後一次心跳起算，無論當前狀態為 Normal、Warning 或 Error，超時均轉為 Lost 並觸發告警；Lost 恢復後一律需人工 Acknowledge 清除全域告警標記（FR-019）。ScheduledJob 的計時器（最大允許執行時間）僅在進入 Running 狀態時啟動，收到 Completed / Failed 即取消；站台重啟時若最後狀態為 Running，因執行結果未知，立即轉為 Warning 並觸發告警要求人工確認（FR-033），不重啟計時器。維護模式從任何狀態均可進入，退出後重置為 Unknown 等待下次心跳。
 
 ---
 
@@ -828,6 +832,7 @@ public interface IMonitoredComponentRepository
 public interface IComponentStateRepository
 {
     Task<ComponentState?> GetByComponentIdAsync(string componentId, CancellationToken ct = default);
+    Task<IReadOnlyList<ComponentState>> GetByComponentIdsAsync(IEnumerable<string> componentIds, CancellationToken ct = default);  // batch fetch for health evaluation (FR-045)
     Task<IReadOnlyList<ComponentState>> GetAllAsync(CancellationToken ct = default);
     Task UpsertAsync(ComponentState state, CancellationToken ct = default);  // FR-033 restore
 }
@@ -993,6 +998,7 @@ public interface IRealtimeNotificationService
     Task PushAlertAcknowledgedAsync(string systemId, string acknowledgedBy, CancellationToken ct = default);
     Task PushCommandStatusChangedAsync(CommandStatusDto dto, CancellationToken ct = default);
     Task PushHealthNotificationAsync(NotificationInboxItemDto dto, CancellationToken ct = default);
+    Task PushDailyExecutionUpdatedAsync(DailyExecutionDto dto, CancellationToken ct = default);  // FR-046: real-time update for management page
 }
 ```
 
