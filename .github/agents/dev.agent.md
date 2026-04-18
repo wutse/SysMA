@@ -50,7 +50,19 @@ Code performance and resource management are non-negotiable:
 
 ---
 
-## 5. Directory Scope
+## 5. Testing Requirement
+
+All `public` members (classes, methods, properties) introduced or modified in this session **must** have corresponding MSTest unit tests:
+
+*   **Mandatory Coverage**: Every `public` method and property must have at least one corresponding MSTest test case validating its behavior.
+*   **Test Project Location**: Tests must reside in the corresponding `*.Tests` project under the `tests/` directory, mirroring the `src/` structure.
+*   **Test Naming Convention**: Follow the pattern `MethodName_Scenario_ExpectedResult` (e.g., `Calculate_WhenAmountIsNegative_ThrowsArgumentException`).
+*   **Test Skill**: All tests must follow the practices defined in `.github/skills/csharp-mstest/SKILL.md`.
+*   **No Untested Public API**: Submitting public-facing code without accompanying tests is a violation of the Definition of Done.
+
+---
+
+## 6. Directory Scope
 
 These rules apply strictly to the implementation phase within the **`src/`** directory. All logic must be "Clean by Design" before moving to subsequent lifecycle stages.
 
