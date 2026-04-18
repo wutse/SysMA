@@ -2,25 +2,26 @@
 
 > **建立日期**: 2026-04-17
 > **最後更新**: 2026-04-18
-> **版本**: v1.3
+> **版本**: v1.4
 > **狀態**: Draft
-> **對應需求**: `docs/analysis/BrokerageMonitoringPlatform.requirements.md` (v1.9)
+> **對應需求**: `docs/analysis/BrokerageMonitoringPlatform.requirements.md` (v2.0)
 > **設計師**: System Architect
 
 ---
 
 ## 0. 確認技術選型
 
-| 項目                | 選定方案                             | 理由                                          |
-| ------------------- | ------------------------------------ | --------------------------------------------- |
-| **ORM**             | Dapper + SQLite Provider             | 輕量、直接 SQL 控制、無 migration overhead    |
-| **Cron 引擎**       | Quartz.NET                           | 成熟 .NET 排程框架，內建 Cron 解析 (FR-012)   |
-| **Email**           | System.Net.Mail                      | 無帳密 Mail Relay 場景，無需額外套件 (FR-010) |
-| **ZeroMQ 訊息格式** | JSON (System.Text.Json)              | 可讀性佳、零依賴、易 Debug                    |
-| **前端/即時推送**   | Blazor Server + ASP.NET Core SignalR | 已確認 (OI-011)                               |
-| **資料庫**          | SQLite (WAL mode)                    | 已確認 (OI-012)                               |
-| **ZeroMQ 訂閱**     | XSUB ← 獨立 Broker                   | 已確認 (OI-013)                               |
-| **部署**            | Kestrel self-hosted .exe (Windows)   | 已確認 (OI-015)                               |
+| 項目                | 選定方案                             | 理由                                                               |
+| ------------------- | ------------------------------------ | ------------------------------------------------------------------ |
+| **ORM**             | Dapper + SQLite Provider             | 輕量、直接 SQL 控制、無 migration overhead                         |
+| **Cron 引擎**       | Quartz.NET                           | 成熟 .NET 排程框架，內建 Cron 解析 (FR-012)                        |
+| **Email**           | System.Net.Mail                      | 無帳密 Mail Relay 場景，無需額外套件 (FR-010)                      |
+| **ZeroMQ 訊息格式** | JSON (System.Text.Json)              | 可讀性佳、零依賴、易 Debug                                         |
+| **前端/即時推送**   | Blazor Server + ASP.NET Core SignalR | 已確認 (OI-011)                                                    |
+| **資料庫**          | SQLite (WAL mode)                    | 已確認 (OI-012)                                                    |
+| **ZeroMQ 訂閱**     | XSUB ← 獨立 Broker                   | 已確認 (OI-013)                                                    |
+| **部署**            | Kestrel self-hosted .exe (Windows)   | 已確認 (OI-015)                                                    |
+| **Outlook COM**     | Microsoft.Office.Interop.Outlook     | Mail Relay Local Agent 郵件輪詢 (FR-048)；Local Agent 專案獨立使用 |
 
 ---
 
@@ -37,6 +38,7 @@ graph LR
     MCo["MonitoredComponent AR"]
     CS["ComponentState VO"]
     HB["Heartbeat Processor"]
+    MCP["Mail Channel Processor"]
   end
 
   subgraph AC["Alert Context"]
@@ -69,12 +71,17 @@ graph LR
     AL["AuditLogEntry (Immutable)"]
   end
 
+  subgraph LAGENT["Mail Relay Local Agent"]
+    LA["Outlook COM Poller"]
+  end
+
   MC -->|"ComponentStatusChanged"| AC
   MC -->|"ComponentStatusChanged"| AHC
   AC -->|"AlertAcknowledged"| MC
   CFG -->|"ConfigurationUpdated"| MC
   AHC -->|"HealthNotificationSent"| NI
   MC -->|"StateChanged"| AUDIT
+  LAGENT -->|"MailRelayMessage via ZeroMQ"| MC
 ```
 
 > **Design Intent**: 五個 Bounded Context 各自擁有獨立的資料模型與職責。Monitoring Context 是核心，負責狀態機與失聯偵測；Alert Context 消費狀態變更事件並執行通知決策。
@@ -102,16 +109,17 @@ graph LR
 #### Aggregate Root: `MonitoredComponent`
 > 對應 FR-028, FR-036, FR-038, FR-039
 
-| 成員                      | 類型                   | 說明                               |
-| ------------------------- | ---------------------- | ---------------------------------- |
-| `ComponentId`             | `string` (PK)          | 元件唯一識別碼                     |
-| `SystemId`                | `string` (FK)          | 所屬系統                           |
-| `Name`                    | `string`               | 元件顯示名稱                       |
-| `ComponentType`           | `ComponentType` (Enum) | `Service` / `ScheduledJob`         |
-| `ZeroMQTopic`             | `string`               | 訂閱 Topic                         |
-| `HeartbeatTimeoutSeconds` | `int`                  | 心跳超時閾值 (FR-028)              |
-| `CronExpression`          | `string?`              | 排程任務用，Lost 判定窗口 (FR-038) |
-| `IsActive`                | `bool`                 | 是否停用                           |
+| 成員                      | 類型                    | 說明                                           |
+| ------------------------- | ----------------------- | ---------------------------------------------- |
+| `ComponentId`             | `string` (PK)           | 元件唯一識別碼                                 |
+| `SystemId`                | `string` (FK)           | 所屬系統                                       |
+| `Name`                    | `string`                | 元件顯示名稱                                   |
+| `ComponentType`           | `ComponentType` (Enum)  | `Service` / `ScheduledJob`                     |
+| `ZeroMQTopic`             | `string`                | 訂閱 Topic                                     |
+| `HeartbeatTimeoutSeconds` | `int`                   | 心跳超時閾值 (FR-028)                          |
+| `CronExpression`          | `string?`               | 排程任務用，Lost 判定窗口 (FR-038)             |
+| `MailParsingRule`         | `MailParsingRule?` (VO) | 郵件解析規則（選填，Phase 1 最多一條，FR-049） |
+| `IsActive`                | `bool`                  | 是否停用                                       |
 
 #### Entity: `ComponentState`
 > 狀態為熱資料，獨立維護於記憶體及 SQLite upsert
@@ -199,14 +207,15 @@ graph LR
 
 #### Value Objects（新增 / 更新）
 
-| VO                    | 欄位                                                                                             | 說明                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------- |
-| `MarketSessionWindow` | `StartTime: TimeOnly`, `EndTime: TimeOnly`                                                       | 盤中時段                              |
-| `EmailAddress`        | `Value: string`                                                                                  | 含格式驗證                            |
-| `SubIndicator`        | `Name`, `Status (Normal/Error)`, `Metric: MetricValue?`                                          | FR-039                                |
-| `MetricValue`         | `Label: string`, `Value: decimal`                                                                | 數值指標                              |
-| `HealthRuleSchedule`  | `ScheduleType`, `CronExpression: string?`, `DayOfWeek: DayOfWeek?` (含 `IsMatch(DateOnly)` 邏輯) |                                       |
-| `WatchedComponent`    | `ComponentId: string`, `ComponentType: ComponentType`                                            | **新增**；Definition 監控元件清單項目 |
+| VO                    | 欄位                                                                                                                                | 說明                                               |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `MarketSessionWindow` | `StartTime: TimeOnly`, `EndTime: TimeOnly`                                                                                          | 盤中時段                                           |
+| `EmailAddress`        | `Value: string`                                                                                                                     | 含格式驗證                                         |
+| `SubIndicator`        | `Name`, `Status (Normal/Error)`, `Metric: MetricValue?`                                                                             | FR-039                                             |
+| `MetricValue`         | `Label: string`, `Value: decimal`                                                                                                   | 數值指標                                           |
+| `HealthRuleSchedule`  | `ScheduleType`, `CronExpression: string?`, `DayOfWeek: DayOfWeek?` (含 `IsMatch(DateOnly)` 邏輯)                                    |                                                    |
+| `WatchedComponent`    | `ComponentId: string`, `ComponentType: ComponentType`                                                                               | **新增**；Definition 監控元件清單項目              |
+| `MailParsingRule`     | `FromPattern: string`, `SubjectPattern: string`, `SuccessKeywords: IReadOnlyList<string>`, `FailureKeywords: IReadOnlyList<string>` | FR-049；BI-016：兩組關鍵字不得重疊；衝突時失敗優先 |
 
 ---
 
@@ -281,7 +290,7 @@ stateDiagram-v2
   end note
 ```
 
-> **Design Intent**: 將 Service 與 ScheduledJob 的 Lost 判定差異明確編入狀態機 (FR-003, FR-028, BI-011)。Service 元件一旦進入 Stopped 狀態（經由回報或心跳帶 Stopped），不適用心跳超時（豁免），避免手動停機後出現 Lost 誤報。其餘狀態的 Service 心跳計時器從最後一次心跳起算，無論當前狀態為 Normal、Warning 或 Error，超時均轉為 Lost 並觸發告警；Lost 恢復後一律需人工 Acknowledge 清除全域告警標記（FR-019）。ScheduledJob 的計時器（最大允許執行時間）僅在進入 Running 狀態時啟動，收到 Completed / Failed 即取消；站台重啟時若最後狀態為 Running，因執行結果未知，立即轉為 Warning 並觸發告警要求人工確認（FR-033），不重啟計時器。維護模式從任何狀態均可進入，退出後重置為 Unknown 等待下次心跳。
+> **Design Intent**: 將 Service 與 ScheduledJob 的 Lost 判定差異明確編入狀態機 (FR-003, FR-028, BI-011)。Service 元件一旦進入 Stopped 狀態（經由回報或心跳帶 Stopped），不適用心跳超時（豁免），避免手動停機後出現 Lost 誤報。其餘狀態的 Service 心跳計時器從最後一次心跳起算，無論當前狀態為 Normal、Warning 或 Error，超時均轉為 Lost 並觸發告警；Lost 恢復後一律需人工 Acknowledge 清除全域告警標記（FR-019）。ScheduledJob 的計時器（最大允許執行時間）僅在進入 Running 狀態時啟動，收到 Completed / Failed 即取消；站台重啟時若最後狀態為 Running，因執行結果未知，立即轉為 Warning 並觸發告警要求人工確認（FR-033），不重啟計時器。維護模式從任何狀態均可進入，退出後重置為 Unknown 等待下次心跳。郵件渠道（FR-050）觸發的狀態轉換與 ZeroMQ 心跳渠道完全相同；MailChannelProcessor 依元件類型映射解析結果為對應狀態值後，進入相同的狀態機轉換流程（BI-017）。
 
 ---
 
@@ -302,6 +311,7 @@ stateDiagram-v2
 | `DailyExecutionExempted`         | 截止時間到達時系統處於維護中，豁免本次評估 (FR-016, BI-006) | NotificationInbox, SignalR Hub (Toast)                                                          |
 | `DailyExecutionMissed`           | 站台重啟後截止時間已過，補建 Missed 實例                    | NotificationInbox, SignalR Hub                                                                  |
 | `HealthNotificationSent`         | 彙整通知發出                                                | NotificationInbox, SignalR Hub (Toast)                                                          |
+| `MailChannelMessageReceived`     | Local Agent 透過 ZeroMQ 送達 MailRelayMessage               | MailChannelProcessor（比對 MailParsingRule → 映射 ComponentStatus → ComponentStatusChanged）    |
 
 ---
 
@@ -421,7 +431,8 @@ BrokerageMonitor.sln
 │   │   │       └── V001_InitialSchema.sql
 │   │   ├── ZeroMQ/
 │   │   │   ├── ZeroMQSubscriberService.cs      (XSUB, IHostedService)
-│   │   │   └── HeartbeatMessageParser.cs
+│   │   │   ├── HeartbeatMessageParser.cs
+│   │   │   └── MailChannelMessageParser.cs     ← 新增（JSON → MailRelayMessage DTO）
 │   │   ├── Monitoring/
 │   │   │   ├── HeartbeatTimeoutMonitor.cs      (per-component Timer, IHostedService)
 │   │   │   └── DataRetentionService.cs         (Quartz job, 30-day cleanup)
@@ -460,10 +471,22 @@ BrokerageMonitor.sln
 │       │       └── NotificationToast.razor
 │       └── appsettings.json
 │
-└── tests/
-    ├── BrokerageMonitor.Domain.Tests/
-    ├── BrokerageMonitor.Application.Tests/
-    └── BrokerageMonitor.Infrastructure.Tests/
+├── tests/
+│   ├── BrokerageMonitor.Domain.Tests/
+│   ├── BrokerageMonitor.Application.Tests/
+│   └── BrokerageMonitor.Infrastructure.Tests/
+└── tools/
+    └── BrokerageMonitor.MailAgent/                         ← 新增（Windows Console App， FR-048）
+        ├── Program.cs                                      (入口點 + DI Composition Root)
+        ├── Workers/
+        │   └── MailRelayWorker.cs                          (IHostedService — 定時輪詢主循環)
+        ├── Outlook/
+        │   └── OutlookMailReader.cs                        (Outlook COM Interop 封裝層)
+        ├── ZeroMQ/
+        │   └── ZeroMQMailPublisher.cs                      (NetMQ PUSH → ZeroMQ Broker)
+        ├── Models/
+        │   └── MailRelayMessage.cs                         (出局訊息 DTO)
+        └── appsettings.json                                (BrokerAddress, PollIntervalSeconds, MailboxFolder)
 ```
 
 ---
@@ -490,14 +513,19 @@ graph LR
     MON["Monitored Systems × 20<br/>[Internal Systems via Adapter]"]
   end
 
+  subgraph LOCAL["Mail Relay Local Agent<br/>(Operator's PC)"]
+    LA["MailAgent.exe<br/>(Outlook COM + NetMQ)"]
+  end
+
   OP -->|"Views dashboard & operates"| BMS
   MON -->|"Push heartbeat via ZeroMQ PUB"| ZB
   ZB -->|"Forward via XPUB → XSUB"| BMS
   BMS -->|"Send emails via SMTP"| MR
   BMS -->|"Send notifications via Webhook"| MST
+  LA -->|"MailRelayMessage via ZeroMQ PUB"| ZB
 ```
 
-> **Design Intent**: 監控站台是唯一與 ZeroMQ Broker 互動的消費方；Adapter 服務在 Broker 上游，不在本系統範疇。
+> **Design Intent**: 監控站台是唯一 XSUB 消費方；Adapter 服務在 Broker 上游轉換心跳訊息，Mail Relay Local Agent 亦透過同一 Broker 推送郵件轉送訊息（MailRelayMessage）；兩者均不在監控站台本身範疇，但 Local Agent 為本系統附屬子元件（FR-048）。
 
 ---
 
@@ -573,9 +601,16 @@ graph TB
   AHE --> TNS
   AES --> ENS
   AES --> HUB
+
+  subgraph LOCAL_AGENT["Mail Relay Local Agent (Operator's PC)"]
+    MAGENT["MailAgent.exe<br/>(Windows Console App)<br/>Outlook COM + NetMQ PUB"]
+  end
+  MAGENT -->|"ZeroMQ PUB<br/>topic=mailrelay"| ZB
+  ZSS -->|"MailRelayMessage event"| MCP_SVC
+  MCP_SVC["MailChannelProcessor"] -->|"ComponentStatusChanged"| EVT
 ```
 
-> **Design Intent**: 所有外部通訊（ZeroMQ、SMTP、Teams）均隔離於 Infrastructure 層，透過 Application 層介面解耦。HeartbeatTimeoutMonitor 作為獨立 Hosted Service 維護每個元件的計時器，避免 Quartz 過度 overhead。
+> **Design Intent**: 所有外部通訊（ZeroMQ、SMTP、Teams）均隔離於 Infrastructure 層，透過 Application 層介面解耦。HeartbeatTimeoutMonitor 作為獨立 Hosted Service 維護每個元件的計時器，避免 Quartz 過度 overhead。Mail Relay Local Agent 為獨立 Windows Console App，部署於維運人員個人主機，透過同一 ZeroMQ Broker 推送 MailRelayMessage；站台內 ZeroMQSubscriberService 統一訂閱並依 `messageType` 分派至 IMailChannelProcessor（FR-051）。
 
 ---
 
@@ -603,6 +638,38 @@ graph LR
 ```
 
 > **Design Intent**: 監控站台僅實作 XSUB 訂閱通道接收心跳。雙向指令與相關狀態追蹤均移至 Phase 2。
+
+---
+
+### 3.4 Component Diagram (Level 3) — Mail Channel Integration
+
+```mermaid
+%%  Component Diagram — Mail Channel Integration
+graph LR
+  subgraph MAGENT_BOX["MailAgent.exe (Operator's PC)"]
+    OR["OutlookMailReader\n(COM Interop)"]
+    ZMP["ZeroMQMailPublisher\n(NetMQ PUB)"]
+    OR -->|"poll every N sec"| ZMP
+  end
+
+  ZB2["ZeroMQ Broker"]
+
+  subgraph STATION["BrokerageMonitor.exe"]
+    ZSS2["ZeroMQSubscriberService\n(XSUB)"]
+    MCMP["MailChannelMessageParser\n(JSON → MailRelayMessage DTO)"]
+    MCPA["IMailChannelProcessor\n(match rule → map status)"]
+    COMP2["ComponentState Update\n(same pipeline as heartbeat)"]
+
+    ZSS2 -->|"raw frame\n(messageType=MailRelay)"| MCMP
+    MCMP -->|"MailRelayMessage"| MCPA
+    MCPA -->|"ComponentStatusChanged\n(FR-050)"| COMP2
+  end
+
+  ZMP -->|"ZeroMQ PUB\ntopic=mailrelay"| ZB2
+  ZB2 -->|"XSUB forward"| ZSS2
+```
+
+> **Design Intent**: `MailChannelProcessor` 依元件設定的 `MailParsingRule`（From + Subject 雙條件 → 失敗優先關鍵字判定）解析郵件，映射為 `Completed`/`Failed`（排程任務）或 `Normal`/`Error`（背景服務）後，觸發與心跳渠道完全相同的後續流程（BI-017）。`ZeroMQSubscriberService` 透過 `messageType` 欄位區分心跳訊息與郵件轉送訊息并分派至對應 Processor。
 
 ---
 
@@ -998,6 +1065,27 @@ public interface IRealtimeNotificationService
     Task PushHealthNotificationAsync(NotificationInboxItemDto dto, CancellationToken ct = default);
     Task PushDailyExecutionUpdatedAsync(DailyExecutionDto dto, CancellationToken ct = default);  // FR-046: real-time update for management page
 }
+
+// Application/Services/IMailChannelProcessor.cs  ← 新增
+// Invoked by ZeroMQSubscriberService when messageType == "MailRelay" (FR-050).
+// Iterates all active components with a MailParsingRule and applies From+Subject matching;
+// on match, applies keyword evaluation (failure-first, BI-016) and maps result to ComponentStatus;
+// raises ComponentStatusChanged which flows through the identical downstream pipeline as a heartbeat (BI-017).
+public interface IMailChannelProcessor
+{
+    /// <summary>
+    /// Process a raw MailRelayMessage forwarded by Mail Relay Local Agent.
+    /// Matching logic:
+    ///   1. FromPattern (exact or wildcard) AND SubjectPattern (substring) — both must match.
+    ///   2. Failure-first: if any FailureKeyword found in Subject or Body → failure result.
+    ///   3. Otherwise: if any SuccessKeyword found → success result.
+    ///   4. If neither matched → discard; log warning (ERR_MAIL_NO_RULE_MATCH).
+    /// Status mapping per FR-050:
+    ///   ScheduledJob: success → Completed, failure → Failed
+    ///   Service:      success → Normal,    failure → Error
+    /// </summary>
+    Task ProcessAsync(MailRelayMessage message, CancellationToken ct = default);
+}
 ```
 
 ---
@@ -1055,6 +1143,35 @@ public sealed record MetricPayload(string Label, decimal Value);
 
 ---
 
+### 6.2 Mail Relay Message (MailAgent.exe → Broker → Station XSUB)
+
+ZeroMQ multipart frame: `[mailrelay][json_payload_bytes]`
+
+```json
+{
+  "messageType": "MailRelay",
+  "from": "scheduler@company.local",
+  "subject": "[中徎科技] 日結清算排程 執行完成",
+  "body": "完整郵件本文...",
+  "receivedAt": "2026-04-18T08:35:00.000Z"
+}
+```
+
+**Topic 命名規範**: 固定為 `mailrelay`（不含元件 ID，比對邏輯在站台內執行）
+
+**C# DTO**:
+```csharp
+public sealed record MailRelayMessage(
+    string MessageType,   // always "MailRelay"
+    string From,
+    string Subject,
+    string Body,
+    DateTimeOffset ReceivedAt
+);
+```
+
+---
+
 ## 7. Data Schema (SQLite + Dapper)
 
 > Schema 初始化於 `DatabaseInitializer.cs`，啟動時執行 `CREATE TABLE IF NOT EXISTS`，並設定 `PRAGMA journal_mode=WAL`。
@@ -1084,7 +1201,11 @@ CREATE TABLE IF NOT EXISTS MonitoredComponents (
     CronExpression          TEXT,           -- nullable; ScheduledJob only
     IsActive                INTEGER NOT NULL DEFAULT 1,
     CreatedAt               TEXT NOT NULL,
-    UpdatedAt               TEXT NOT NULL
+    UpdatedAt               TEXT NOT NULL,
+    MailFromPattern         TEXT,           -- nullable; FR-049 From Pattern (exact or wildcard)
+    MailSubjectPattern      TEXT,           -- nullable; FR-049 Subject Pattern (substring match)
+    MailSuccessKeywords     TEXT,           -- nullable; JSON array of strings (BI-016: no overlap with failure)
+    MailFailureKeywords     TEXT            -- nullable; JSON array of strings (BI-016: takes priority)
 );
 
 -- Current Component State (upsert on every heartbeat)
@@ -1225,17 +1346,19 @@ public sealed class TeamsWebhookException : Exception { ... }
 
 ### 8.2 Error Codes
 
-| Code                              | 場景                                                |
-| --------------------------------- | --------------------------------------------------- |
-| `ERR_REASON_REQUIRED`             | 手動操作未提供理由 (BI-001)                         |
-| `ERR_SESSION_MISSING`             | Operator Session 姓名為空 (BI-009)                  |
-| `ERR_ZMQ_DISCONNECTED`            | ZeroMQ Broker 連線中斷                              |
-| `ERR_EMAIL_DELIVERY`              | SMTP 發送失敗                                       |
-| `ERR_TEAMS_WEBHOOK`               | Teams Webhook 呼叫失敗                              |
-| `ERR_SYSTEM_NOT_FOUND`            | 系統 ID 不存在                                      |
-| `ERR_COMPONENT_NOT_FOUND`         | 元件 ID 不存在                                      |
-| `ERR_DEFINITION_EMPTY_COMPONENTS` | Definition 監控元件清單為空 (BI-014) ← 新增         |
-| `ERR_DAILY_EXECUTION_TERMINAL`    | 嘗試更新已進入終態的 DailyExecution (BI-013) ← 新增 |
+| Code                              | 場景                                                           |
+| --------------------------------- | -------------------------------------------------------------- |
+| `ERR_REASON_REQUIRED`             | 手動操作未提供理由 (BI-001)                                    |
+| `ERR_SESSION_MISSING`             | Operator Session 姓名為空 (BI-009)                             |
+| `ERR_ZMQ_DISCONNECTED`            | ZeroMQ Broker 連線中斷                                         |
+| `ERR_EMAIL_DELIVERY`              | SMTP 發送失敗                                                  |
+| `ERR_TEAMS_WEBHOOK`               | Teams Webhook 呼叫失敗                                         |
+| `ERR_SYSTEM_NOT_FOUND`            | 系統 ID 不存在                                                 |
+| `ERR_COMPONENT_NOT_FOUND`         | 元件 ID 不存在                                                 |
+| `ERR_DEFINITION_EMPTY_COMPONENTS` | Definition 監控元件清單為空 (BI-014) ← 新增                    |
+| `ERR_DAILY_EXECUTION_TERMINAL`    | 嘗試更新已進入終態的 DailyExecution (BI-013) ← 新增            |
+| `ERR_MAIL_KEYWORD_OVERLAP`        | 成功/失敗關鍵字集合存在重疊，拒絕儲存 MailParsingRule (BI-016) |
+| `ERR_MAIL_NO_RULE_MATCH`          | MailRelayMessage 無符合任何元件派解析規則，丟棄並記錄警告日誌  |
 
 ### 8.3 Failure Behavior
 
@@ -1443,7 +1566,62 @@ sequenceDiagram
 
 ---
 
-## 12. Startup & Dependency Injection Outline
+## 12. Domain Event Sequence — Mail Channel Processing
+
+```mermaid
+%%  Sequence Diagram — Mail Channel Processing Flow (FR-048 ~ FR-051, BI-016/017)
+sequenceDiagram
+  participant MAGENT as MailAgent.exe
+  participant ZB as ZeroMQ Broker
+  participant ZSS as ZeroMQSubscriberService
+  participant MCMP as MailChannelMessageParser
+  participant MCPA as MailChannelProcessor
+  participant COMP as ComponentStateRepository
+  participant AES as AlertEvaluationService
+  participant HUB as MonitorHub (SignalR)
+
+  MAGENT ->>+ ZB: PUB (topic=mailrelay, MailRelayMessage)
+  ZB ->>+ ZSS: XSUB forward
+  ZSS ->>+ MCMP: raw frame (messageType=MailRelay)
+  MCMP -->>- ZSS: MailRelayMessage
+  ZSS ->>+ MCPA: ProcessAsync(MailRelayMessage)
+
+  MCPA ->> MCPA: Iterate active components with MailParsingRule
+  loop for each component with rule
+    MCPA ->> MCPA: FromPattern match?
+    MCPA ->> MCPA: SubjectPattern match?
+    alt Both patterns match
+      MCPA ->> MCPA: FailureKeyword in Subject/Body? (BI-016 failure-first)
+      alt Failure keyword found
+        MCPA ->> MCPA: map status (ScheduledJob=Failed, Service=Error)
+      else Success keyword found
+        MCPA ->> MCPA: map status (ScheduledJob=Completed, Service=Normal)
+      else No keyword match
+        MCPA ->> MCPA: discard + log WARN (ERR_MAIL_NO_RULE_MATCH)
+      end
+    end
+  end
+
+  MCPA ->>+ COMP: UpsertAsync(ComponentState)
+  COMP -->>- MCPA: OK
+  MCPA ->> MCPA: Raise ComponentStatusChanged event
+  MCPA -->>- ZSS: done
+
+  Note over MCPA,AES: Identical downstream pipeline as heartbeat channel (BI-017)
+  MCPA ->>+ AES: ComponentStatusChanged
+  AES ->> AES: Check market session / maintenance (BI-004/006)
+  AES ->>+ HUB: PushComponentStatusChangedAsync
+  HUB -->>- AES: OK
+  AES -->>- MCPA: done
+  HUB ->>+ UI: OnComponentStatusChanged
+  Note over UI: Blazor UI updates
+```
+
+> **Design Intent**: Mail Channel 處理流程與心跳渠道共用完全相同的下游 Pipeline（Alert 評估、SignalR 推送、聚合健康追蹤、歷史記錄），不壬設任何專屬邏輯（BI-017）。失敗關鍵字优先原則（BI-016）集中於 `MailChannelProcessor`，避免分散詞続。
+
+---
+
+## 13. Startup & Dependency Injection Outline
 
 ### 12.0 appsettings.json 結構
 
@@ -1485,6 +1663,32 @@ sequenceDiagram
 > - `ZeroMQ.BrokerXSubAddress`：監控站台 XSUB 連線目標（即 Broker 的 XPUB 端點）。
 > - `Smtp.Host`：公司 Mail Relay，無需帳密（FR-010）。
 > - `DataRetentionDays`：歷史資料保留天數，預設 30 天（FR-024）。
+
+---
+
+### 12.1 Mail Relay Local Agent — appsettings.json
+
+> `tools/BrokerageMonitor.MailAgent/appsettings.json`，與監控站台設定完全獨立。
+
+```json
+{
+  "MailAgent": {
+    "ZeroMQBrokerAddress": "tcp://monitor-host:5555",
+    "PollIntervalSeconds": 30,
+    "OutlookMailboxFolder": "Inbox"
+  },
+  "NLog": {
+    "rules": [
+      { "logger": "*", "minLevel": "Info", "writeTo": "console,file" }
+    ]
+  }
+}
+```
+
+> **設定說明**：
+> - `ZeroMQBrokerAddress`：ZeroMQ Broker 的 XSUB 訂閱同一端點（和 Adapter 服務的目標一致）。
+> - `PollIntervalSeconds`：Outlook 輪詢間隔，建議 30 ~ 60 秒（FR-048）。
+> - `OutlookMailboxFolder`：要掃描的 Outlook 收件匣名稱，預設 `Inbox`，支援子文件夾路徑格式如 `Inbox\Monitoring`。
 
 ---
 
@@ -1530,6 +1734,7 @@ builder.Services.AddSingleton<IStateRollupService, StateRollupService>();
 builder.Services.AddScoped<IAlertEvaluationService, AlertEvaluationService>();
 builder.Services.AddScoped<IAggregateHealthEvaluationService, AggregateHealthEvaluationService>();
 builder.Services.AddScoped<IDailyExecutionCreatorService, DailyExecutionCreatorService>();          // ← 新增
+builder.Services.AddScoped<IMailChannelProcessor, MailChannelProcessorService>();                   // ← 新增 (FR-050)
 
 // Notifications
 builder.Services.AddScoped<IEmailNotificationService, SmtpEmailNotificationService>();
@@ -1550,10 +1755,11 @@ app.Run();
 
 ## 13. Open Design Decisions (Pending)
 
-| #      | 項目                                  | 建議                                                    | 需確認方               |
-| ------ | ------------------------------------- | ------------------------------------------------------- | ---------------------- |
-| OD-001 | ZeroMQ DEALER Identity 格式           | 使用 `SystemId` ASCII bytes 作為 DEALER identity        | Adapter/被監控系統團隊 |
-| OD-002 | HeartbeatMessage Topic 命名規範最終版 | `{systemId}.{componentType}.{componentId}`              | Adapter 服務團隊       |
-| OD-003 | appsettings.json 初始匯入格式         | 提供 YAML schema 草案供確認                             | 維運團隊               |
-| OD-004 | Quartz.NET Job Store                  | In-memory（重啟後從 DB 重新排程）vs RAMJobStore         | 開發團隊決定           |
-| OD-005 | 盤中時段跨午夜支援                    | Phase 1 假設不跨午夜（08:00~17:30）；跨午夜移至 Phase 2 | PM 確認                |
+| #      | 項目                                  | 建議                                                                                                                               | 需確認方               |
+| ------ | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| OD-001 | ZeroMQ DEALER Identity 格式           | 使用 `SystemId` ASCII bytes 作為 DEALER identity                                                                                   | Adapter/被監控系統團隊 |
+| OD-002 | HeartbeatMessage Topic 命名規範最終版 | `{systemId}.{componentType}.{componentId}`                                                                                         | Adapter 服務團隊       |
+| OD-003 | appsettings.json 初始匯入格式         | 提供 YAML schema 草案供確認                                                                                                        | 維運團隊               |
+| OD-004 | Quartz.NET Job Store                  | In-memory（重啟後從 DB 重新排程）vs RAMJobStore                                                                                    | 開發團隊決定           |
+| OD-005 | 盤中時段跨午夜支援                    | Phase 1 假設不跨午夜（08:00~17:30）；跨午夜移至 Phase 2                                                                            | PM 確認                |
+| OD-006 | 郵件渠道重複訊息去重策略              | 同一元件在輪詢周期內收到多封相同主旨郵件，是否依 `ReceivedAt` 去重？目前每封郵件均觸發一次狀態更新，建議待實際僅重問題發生後再評估 | 開發團隊確認           |
