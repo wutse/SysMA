@@ -44,8 +44,10 @@ public sealed class QuartzJobSchedulerTests
 
     // Assert — AddQuartzHostedService added at least one IHostedService descriptor
     var hostedServicesAfter = services.Count(sd => sd.ServiceType == typeof(IHostedService));
-    Assert.IsTrue(
-        hostedServicesAfter > hostedServicesBefore,
+    // IsGreaterThan(lowerBound, value): asserts value > lowerBound
+    Assert.IsGreaterThan(
+        hostedServicesBefore,
+        hostedServicesAfter,
         "AddQuartzScheduler should register at least one IHostedService.");
   }
 
@@ -83,7 +85,7 @@ public sealed class QuartzJobSchedulerTests
 
     // Assert — trigger is linked to the job
     var triggers = await scheduler.GetTriggersOfJob(jobKey);
-    Assert.AreEqual(1, triggers.Count, "Exactly one trigger should be associated with the job.");
+    Assert.HasCount(1, triggers, "Exactly one trigger should be associated with the job.");
 
     await scheduler.Shutdown(waitForJobsToComplete: false);
   }
