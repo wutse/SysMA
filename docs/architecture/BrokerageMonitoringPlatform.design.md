@@ -1,9 +1,9 @@
 # 券商內部系統排程與服務監控站台 — Architecture Design
 
 > **建立日期**: 2026-04-17
-> **版本**: v1.0
+> **版本**: v1.1
 > **狀態**: Draft
-> **對應需求**: `docs/analysis/BrokerageMonitoringPlatform.requirements.md` (v1.3)
+> **對應需求**: `docs/analysis/BrokerageMonitoringPlatform.requirements.md` (v1.5)
 > **設計師**: System Architect
 
 ---
@@ -56,8 +56,10 @@ graph LR
 
   subgraph AHC["Aggregate Health Context"]
     direction TB
-    AHR["AggregateHealthRule AR"]
+    HMD["HealthMonitorDefinition AR"]
+    DE["DailyExecution AR"]
     AHE["HealthEvaluationJob"]
+    DECJ["DailyExecutionCreatorJob"]
     NI["NotificationInbox AR"]
     TM["Teams Notifier"]
   end
@@ -149,21 +151,45 @@ graph LR
 **業務不變式**:
 - 同一系統未 Acknowledge 前，不重複彈出 Pop-up (BI-007)
 
-#### Aggregate Root: `AggregateHealthRule`
-> 對應 FR-012, FR-013, FR-014, FR-016
+#### Aggregate Root: `HealthMonitorDefinition`
+> 對應 FR-041, FR-042, FR-046, FR-047（取代原 `AggregateHealthRule`）
 
-| 成員                  | 類型                          | 說明                    |
-| --------------------- | ----------------------------- | ----------------------- |
-| `RuleId`              | `Guid` (PK)                   |                         |
-| `SystemId`            | `string`                      | 所屬系統                |
-| `RuleName`            | `string`                      |                         |
-| `DeadlineTime`        | `TimeOnly`                    | 截止時間                |
-| `Schedule`            | `HealthRuleSchedule` (VO)     | Daily/Weekly/Cron       |
-| `WatchedComponentIds` | `IReadOnlyList<string>`       | 預定任務清單            |
-| `EmailRecipients`     | `IReadOnlyList<EmailAddress>` | 獨立收件人 (BI-010)     |
-| `TeamsWebhookUrl`     | `string?`                     | 各規則獨立 (OI-001)     |
-| `SendOnFailure`       | `bool`                        | 失敗時是否通知 (FR-014) |
-| `IsActive`            | `bool`                        |                         |
+| 成員                | 類型                                   | 說明                                         |
+| ------------------- | -------------------------------------- | -------------------------------------------- |
+| `DefinitionId`      | `Guid` (PK)                            |                                              |
+| `SystemId`          | `string`                               | 所屬系統                                     |
+| `Name`              | `string`                               |                                              |
+| `DeadlineTime`      | `TimeOnly`                             | 截止時間                                     |
+| `Schedule`          | `HealthRuleSchedule` (VO)              | Daily / Weekly / Cron                        |
+| `WatchedComponents` | `IReadOnlyList<WatchedComponent>` (VO) | 監控元件清單（含元件 ID 與類型，BI-014: ≥1） |
+| `EmailRecipients`   | `IReadOnlyList<EmailAddress>` (VO)     | 獨立收件人 (BI-010)                          |
+| `TeamsWebhookUrl`   | `string?`                              |                                              |
+| `SendOnFailure`     | `bool`                                 | 失敗時是否通知 (FR-014)                      |
+| `IsActive`          | `bool`                                 |                                              |
+
+**業務不變式**:
+- `WatchedComponents` 不得為空 (BI-014)
+- `EmailRecipients` 與系統個別告警收件人完全獨立 (BI-010)
+
+#### Aggregate Root: `DailyExecution`
+> 對應 FR-042, FR-043, FR-044, FR-045, BI-012, BI-013
+
+| 成員                 | 類型                     | 說明                                                |
+| -------------------- | ------------------------ | --------------------------------------------------- |
+| `ExecutionId`        | `Guid` (PK)              |                                                     |
+| `DefinitionId`       | `Guid` (FK)              | 對應 HealthMonitorDefinition                        |
+| `SystemId`           | `string`                 |                                                     |
+| `ExecutionDate`      | `DateOnly`               | 當日日期（BI-012: 同一 Definition + Date 唯一）     |
+| `Status`             | `DailyExecutionStatus`   | `InProgress / Success / Failed / Missed / Exempted` |
+| `CreatedAt`          | `DateTimeOffset`         | 實例建立時間（批次建立或補建）                      |
+| `EvaluatedAt`        | `DateTimeOffset?`        | 截止時間到達時評估時間（終態才有值）                |
+| `FailedComponents`   | `IReadOnlyList<string>?` | 未達成條件的元件 ID 清單（Failed 時記錄）           |
+| `MissedReason`       | `string?`                | Missed 原因描述（例：「站台未運行」）               |
+| `NotificationSentAt` | `DateTimeOffset?`        | 通知發送時間                                        |
+
+**業務不變式**:
+- 一旦進入終態（Success / Failed / Missed / Exempted）不得再被覆寫 (BI-013)
+- 補建邏輯呼叫前須先查詢是否已存在 (BI-012)
 
 #### Aggregate Root: `NotificationInboxItem`
 > 對應 FR-015, FR-020, FR-024
@@ -171,22 +197,24 @@ graph LR
 | 成員               | 類型                      | 說明                              |
 | ------------------ | ------------------------- | --------------------------------- |
 | `InboxItemId`      | `Guid` (PK)               |                                   |
-| `RuleId`           | `Guid`                    |                                   |
+| `DefinitionId`     | `Guid`                    | 對應 HealthMonitorDefinition      |
+| `ExecutionId`      | `Guid?`                   | 對應 DailyExecution（若有）       |
 | `Title`            | `string`                  |                                   |
 | `Body`             | `string`                  |                                   |
 | `NotificationType` | `NotificationType` (Enum) | `HealthSuccess` / `HealthFailure` |
 | `SentAt`           | `DateTimeOffset`          |                                   |
 | `IsRead`           | `bool`                    |                                   |
 
-#### Value Objects
+#### Value Objects（新增 / 更新）
 
-| VO                    | 欄位                                                               | 說明       |
-| --------------------- | ------------------------------------------------------------------ | ---------- |
-| `MarketSessionWindow` | `StartTime: TimeOnly`, `EndTime: TimeOnly`                         | 盤中時段   |
-| `EmailAddress`        | `Value: string`                                                    | 含格式驗證 |
-| `SubIndicator`        | `Name`, `Status (Normal/Error)`, `Metric: MetricValue?`            | FR-039     |
-| `MetricValue`         | `Label: string`, `Value: decimal`                                  | 數值指標   |
-| `HealthRuleSchedule`  | `ScheduleType`, `CronExpression: string?`, `DayOfWeek: DayOfWeek?` |            |
+| VO                    | 欄位                                                               | 說明                                  |
+| --------------------- | ------------------------------------------------------------------ | ------------------------------------- |
+| `MarketSessionWindow` | `StartTime: TimeOnly`, `EndTime: TimeOnly`                         | 盤中時段                              |
+| `EmailAddress`        | `Value: string`                                                    | 含格式驗證                            |
+| `SubIndicator`        | `Name`, `Status (Normal/Error)`, `Metric: MetricValue?`            | FR-039                                |
+| `MetricValue`         | `Label: string`, `Value: decimal`                                  | 數值指標                              |
+| `HealthRuleSchedule`  | `ScheduleType`, `CronExpression: string?`, `DayOfWeek: DayOfWeek?` |                                       |
+| `WatchedComponent`    | `ComponentId: string`, `ComponentType: ComponentType`              | **新增**；Definition 監控元件清單項目 |
 
 ---
 
@@ -245,19 +273,22 @@ stateDiagram-v2
 
 ### 1.4 Domain Events
 
-| 事件                             | 觸發條件                           | 訂閱方                                                                   |
-| -------------------------------- | ---------------------------------- | ------------------------------------------------------------------------ |
-| `ComponentHeartbeatReceived`     | 收到 ZeroMQ 訂閱訊息               | MonitoringService, HeartbeatTimeoutMonitor                               |
-| `ComponentStatusChanged`         | 狀態機轉換                         | AlertEvaluationService, AggregateHealthContext, SignalR Hub, AuditLogger |
-| `ComponentLost`                  | 心跳計時器逾時                     | AlertEvaluationService, SignalR Hub                                      |
-| `AlertTriggered`                 | 狀態轉為 Lost/Error/Warning 且盤中 | PopupNotifier, EmailNotifier                                             |
-| `AlertAcknowledged`              | 維運人員操作 Acknowledge           | AlertRecord, SignalR Hub                                                 |
-| `MaintenanceModeToggled`         | 維運人員操作                       | AlertSuppressor, AuditLogger, SignalR Hub                                |
-| `ManualCommandIssued`            | 維運人員操作觸發/暫停/啟停         | CommandDispatcher, AuditLogger                                           |
-| `CommandResponseReceived`        | ZeroMQ DEALER 回應                 | CommandStatusTracker, SignalR Hub                                        |
-| `CommandTimedOut`                | 指令逾時未回應                     | SignalR Hub (顯示警告)                                                   |
-| `AggregateHealthDeadlineReached` | Quartz.NET Job 觸發                | HealthEvaluationService                                                  |
-| `HealthNotificationSent`         | 彙整通知發出                       | NotificationInbox, SignalR Hub (Toast)                                   |
+| 事件                             | 觸發條件                                 | 訂閱方                                                                   |
+| -------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------ |
+| `ComponentHeartbeatReceived`     | 收到 ZeroMQ 訂閱訊息                     | MonitoringService, HeartbeatTimeoutMonitor                               |
+| `ComponentStatusChanged`         | 狀態機轉換                               | AlertEvaluationService, AggregateHealthContext, SignalR Hub, AuditLogger |
+| `ComponentLost`                  | 心跳計時器逾時                           | AlertEvaluationService, SignalR Hub                                      |
+| `AlertTriggered`                 | 狀態轉為 Lost/Error/Warning 且盤中       | PopupNotifier, EmailNotifier                                             |
+| `AlertAcknowledged`              | 維運人員操作 Acknowledge                 | AlertRecord, SignalR Hub                                                 |
+| `MaintenanceModeToggled`         | 維運人員操作                             | AlertSuppressor, AuditLogger, SignalR Hub                                |
+| `ManualCommandIssued`            | 維運人員操作觸發/暫停/啟停               | CommandDispatcher, AuditLogger                                           |
+| `CommandResponseReceived`        | ZeroMQ DEALER 回應                       | CommandStatusTracker, SignalR Hub                                        |
+| `CommandTimedOut`                | 指令逾時未回應                           | SignalR Hub (顯示警告)                                                   |
+| `DailyExecutionCreated`          | DailyExecutionCreatorJob 批次建立或補建  | SignalR Hub (管理頁面更新)                                               |
+| `AggregateHealthDeadlineReached` | Quartz.NET Job 觸發（截止時間到達）      | HealthEvaluationService                                                  |
+| `DailyExecutionCompleted`        | 截止時間評估完成（Success / Failed）     | NotificationInbox, EmailNotifier, TeamsNotifier, SignalR Hub             |
+| `DailyExecutionMissed`           | 站台重啟後截止時間已過，補建 Missed 實例 | NotificationInbox, SignalR Hub                                           |
+| `HealthNotificationSent`         | 彙整通知發出                             | NotificationInbox, SignalR Hub (Toast)                                   |
 
 ---
 
@@ -282,15 +313,18 @@ BrokerageMonitor.sln
 │   │   │   ├── MonitoredSystem.cs
 │   │   │   ├── MonitoredComponent.cs
 │   │   │   ├── AlertRecord.cs
-│   │   │   ├── AggregateHealthRule.cs
+│   │   │   ├── HealthMonitorDefinition.cs      ← 取代 AggregateHealthRule.cs
+│   │   │   ├── DailyExecution.cs               ← 新增
 │   │   │   └── NotificationInboxItem.cs
 │   │   ├── ValueObjects/
 │   │   │   ├── ComponentStatus.cs          (enum)
+│   │   │   ├── DailyExecutionStatus.cs     (enum: InProgress/Success/Failed/Missed/Exempted) ← 新增
 │   │   │   ├── MarketSessionWindow.cs
 │   │   │   ├── EmailAddress.cs
 │   │   │   ├── SubIndicator.cs
 │   │   │   ├── MetricValue.cs
-│   │   │   └── HealthRuleSchedule.cs
+│   │   │   ├── HealthRuleSchedule.cs
+│   │   │   └── WatchedComponent.cs             ← 新增（含 ComponentId + ComponentType）
 │   │   ├── Events/
 │   │   │   ├── ComponentStatusChanged.cs
 │   │   │   ├── ComponentLost.cs
@@ -299,13 +333,17 @@ BrokerageMonitor.sln
 │   │   │   ├── MaintenanceModeToggled.cs
 │   │   │   ├── ManualCommandIssued.cs
 │   │   │   ├── CommandResponseReceived.cs
+│   │   │   ├── DailyExecutionCreated.cs         ← 新增
+│   │   │   ├── DailyExecutionCompleted.cs       ← 新增
+│   │   │   ├── DailyExecutionMissed.cs          ← 新增
 │   │   │   └── HealthNotificationSent.cs
 │   │   └── Repositories/
 │   │       ├── IMonitoredSystemRepository.cs
 │   │       ├── IMonitoredComponentRepository.cs
 │   │       ├── IComponentStateRepository.cs
 │   │       ├── IAlertRecordRepository.cs
-│   │       ├── IAggregateHealthRuleRepository.cs
+│   │       ├── IHealthMonitorDefinitionRepository.cs  ← 取代 IAggregateHealthRuleRepository.cs
+│   │       ├── IDailyExecutionRepository.cs           ← 新增
 │   │       ├── IExecutionHistoryRepository.cs
 │   │       ├── IAuditLogRepository.cs
 │   │       └── INotificationInboxRepository.cs
@@ -326,14 +364,19 @@ BrokerageMonitor.sln
 │   │   │   │   └── ToggleMaintenanceModeHandler.cs
 │   │   │   ├── History/
 │   │   │   │   └── GetExecutionHistoryQuery.cs
-│   │   │   └── SystemManagement/
-│   │   │       ├── UpsertMonitoredSystemCommand.cs
-│   │   │       └── UpsertMonitoredComponentCommand.cs
+│   │   │   ├── SystemManagement/
+│   │   │   │   ├── UpsertMonitoredSystemCommand.cs
+│   │   │   │   └── UpsertMonitoredComponentCommand.cs
+│   │   │   └── HealthManagement/                           ← 新增
+│   │   │       ├── UpsertHealthDefinitionCommand.cs
+│   │   │       ├── GetHealthDefinitionsQuery.cs
+│   │   │       └── GetDailyExecutionHistoryQuery.cs
 │   │   ├── Services/
 │   │   │   ├── IAlertEvaluationService.cs
 │   │   │   ├── IHeartbeatProcessor.cs
 │   │   │   ├── IStateRollupService.cs
 │   │   │   ├── IAggregateHealthEvaluationService.cs
+│   │   │   ├── IDailyExecutionCreatorService.cs            ← 新增
 │   │   │   └── ICommandDispatcher.cs
 │   │   ├── Notifications/
 │   │   │   ├── IEmailNotificationService.cs
@@ -345,7 +388,9 @@ BrokerageMonitor.sln
 │   │       ├── AlertDto.cs
 │   │       ├── NotificationInboxItemDto.cs
 │   │       ├── AuditLogDto.cs
-│   │       └── ExecutionHistoryDto.cs
+│   │       ├── ExecutionHistoryDto.cs
+│   │       ├── HealthDefinitionDto.cs                      ← 新增
+│   │       └── DailyExecutionDto.cs                        ← 新增
 │   │
 │   ├── BrokerageMonitor.Infrastructure/
 │   │   ├── Persistence/
@@ -356,7 +401,8 @@ BrokerageMonitor.sln
 │   │   │   │   ├── MonitoredComponentRepository.cs
 │   │   │   │   ├── ComponentStateRepository.cs
 │   │   │   │   ├── AlertRecordRepository.cs
-│   │   │   │   ├── AggregateHealthRuleRepository.cs
+│   │   │   │   ├── HealthMonitorDefinitionRepository.cs    ← 取代 AggregateHealthRuleRepository.cs
+│   │   │   │   ├── DailyExecutionRepository.cs             ← 新增
 │   │   │   │   ├── ExecutionHistoryRepository.cs
 │   │   │   │   ├── AuditLogRepository.cs
 │   │   │   │   └── NotificationInboxRepository.cs
@@ -371,7 +417,8 @@ BrokerageMonitor.sln
 │   │   │   ├── HeartbeatTimeoutMonitor.cs      (per-component Timer, IHostedService)
 │   │   │   └── DataRetentionService.cs         (Quartz job, 30-day cleanup)
 │   │   ├── Scheduling/
-│   │   │   ├── AggregateHealthEvaluationJob.cs (Quartz.NET IJob)
+│   │   │   ├── AggregateHealthEvaluationJob.cs (Quartz.NET IJob — deadline evaluation)
+│   │   │   ├── DailyExecutionCreatorJob.cs     (Quartz.NET IJob — daily 05:30 batch create) ← 新增
 │   │   │   └── QuartzJobScheduler.cs
 │   │   ├── Notifications/
 │   │   │   ├── EmailNotificationService.cs
@@ -395,8 +442,9 @@ BrokerageMonitor.sln
 │       │   ├── History/
 │       │   │   └── HistoryPage.razor
 │       │   ├── Management/
-│       │   │   ├── SystemManagementPage.razor
-│       │   │   └── HealthRuleEditorPage.razor
+│       │   │   ├── SystemManagementPage.razor       (FR-031, 內嵌 Definition 清單 FR-047)
+│       │   │   ├── HealthDefinitionEditorPage.razor ← 取代 HealthRuleEditorPage.razor
+│       │   │   └── HealthManagementPage.razor       ← 新增（集中式管理頁 FR-046）
 │       │   └── Shared/
 │       │       ├── OperatorSessionModal.razor   (FR-009)
 │       │       ├── ReasonInputModal.razor       (FR-008, BI-001)
@@ -569,14 +617,15 @@ graph LR
 
 #### Server → Client (Hub Push)
 
-| Hub Method                     | Payload                        | 觸發時機                |
-| ------------------------------ | ------------------------------ | ----------------------- |
-| `OnComponentStatusChanged`     | `ComponentStatusDto`           | 任何元件狀態變更        |
-| `OnAlertTriggered`             | `AlertDto`                     | 盤中告警觸發 (FR-010)   |
-| `OnAlertAcknowledged`          | `{ SystemId, AcknowledgedBy }` | Acknowledge 完成        |
-| `OnMaintenanceModeChanged`     | `{ SystemId, IsActive }`       | 維護模式切換            |
-| `OnCommandStatusChanged`       | `CommandStatusDto`             | 指令狀態更新 (FR-027)   |
-| `OnHealthNotificationReceived` | `NotificationInboxItemDto`     | 彙整通知 Toast (FR-020) |
+| Hub Method                     | Payload                        | 觸發時機                                    |
+| ------------------------------ | ------------------------------ | ------------------------------------------- |
+| `OnComponentStatusChanged`     | `ComponentStatusDto`           | 任何元件狀態變更                            |
+| `OnAlertTriggered`             | `AlertDto`                     | 盤中告警觸發 (FR-010)                       |
+| `OnAlertAcknowledged`          | `{ SystemId, AcknowledgedBy }` | Acknowledge 完成                            |
+| `OnMaintenanceModeChanged`     | `{ SystemId, IsActive }`       | 維護模式切換                                |
+| `OnCommandStatusChanged`       | `CommandStatusDto`             | 指令狀態更新 (FR-027)                       |
+| `OnHealthNotificationReceived` | `NotificationInboxItemDto`     | 彙整通知 Toast (FR-020)                     |
+| `OnDailyExecutionUpdated`      | `DailyExecutionDto`            | 每日執行實例狀態變更（建立/評估完成）← 新增 |
 
 #### Client → Server (Hub Invoke)
 
@@ -653,6 +702,45 @@ public sealed record NotificationInboxItemDto(
     NotificationType NotificationType,
     DateTimeOffset SentAt,
     bool IsRead
+);
+
+// Application/DTOs/HealthDefinitionDto.cs  ← 新增
+public sealed record HealthDefinitionDto(
+    Guid DefinitionId,
+    string SystemId,
+    string SystemName,
+    string Name,
+    TimeOnly DeadlineTime,
+    string ScheduleType,
+    string? CronExpression,
+    IReadOnlyList<WatchedComponentDto> WatchedComponents,
+    IReadOnlyList<string> EmailRecipients,
+    string? TeamsWebhookUrl,
+    bool SendOnFailure,
+    bool IsActive
+);
+
+// Application/DTOs/WatchedComponentDto.cs  ← 新增
+public sealed record WatchedComponentDto(
+    string ComponentId,
+    string ComponentName,
+    ComponentType ComponentType
+);
+
+// Application/DTOs/DailyExecutionDto.cs  ← 新增
+public sealed record DailyExecutionDto(
+    Guid ExecutionId,
+    Guid DefinitionId,
+    string DefinitionName,
+    string SystemId,
+    string SystemName,
+    DateOnly ExecutionDate,
+    string Status,                           // InProgress / Success / Failed / Missed / Exempted
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? EvaluatedAt,
+    IReadOnlyList<string>? FailedComponents,
+    string? MissedReason,
+    DateTimeOffset? NotificationSentAt
 );
 
 // Application/DTOs/AuditLogDto.cs
@@ -755,13 +843,28 @@ public interface IAlertRecordRepository
         string? systemId, DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default);
 }
 
-// Domain/Repositories/IAggregateHealthRuleRepository.cs
-public interface IAggregateHealthRuleRepository
+// Domain/Repositories/IHealthMonitorDefinitionRepository.cs  ← 取代 IAggregateHealthRuleRepository
+public interface IHealthMonitorDefinitionRepository
 {
-    Task<IReadOnlyList<AggregateHealthRule>> GetAllActiveAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<AggregateHealthRule>> GetBySystemIdAsync(string systemId, CancellationToken ct = default);
-    Task UpsertAsync(AggregateHealthRule rule, CancellationToken ct = default);
-    Task DeleteAsync(Guid ruleId, CancellationToken ct = default);
+    Task<HealthMonitorDefinition?> GetByIdAsync(Guid definitionId, CancellationToken ct = default);
+    Task<IReadOnlyList<HealthMonitorDefinition>> GetAllActiveAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<HealthMonitorDefinition>> GetBySystemIdAsync(string systemId, CancellationToken ct = default);
+    Task UpsertAsync(HealthMonitorDefinition definition, CancellationToken ct = default);
+    Task DeleteAsync(Guid definitionId, CancellationToken ct = default);
+}
+
+// Domain/Repositories/IDailyExecutionRepository.cs  ← 新增
+public interface IDailyExecutionRepository
+{
+    Task<DailyExecution?> GetByDefinitionAndDateAsync(Guid definitionId, DateOnly date, CancellationToken ct = default);
+    Task<IReadOnlyList<DailyExecution>> GetByDateAsync(DateOnly date, CancellationToken ct = default);
+    Task<IReadOnlyList<DailyExecution>> QueryHistoryAsync(
+        Guid? definitionId, string? systemId, DateOnly from, DateOnly to, CancellationToken ct = default);
+    Task AddAsync(DailyExecution execution, CancellationToken ct = default);
+    Task UpdateStatusAsync(Guid executionId, DailyExecutionStatus status,
+        DateTimeOffset evaluatedAt, IReadOnlyList<string>? failedComponents,
+        DateTimeOffset? notificationSentAt, CancellationToken ct = default);  // BI-013: terminal state only
+    Task DeleteOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default);  // FR-024
 }
 
 // Domain/Repositories/IExecutionHistoryRepository.cs
@@ -831,11 +934,31 @@ public interface IAlertEvaluationService
 public interface IAggregateHealthEvaluationService
 {
     /// <summary>
-    /// Evaluate one AggregateHealthRule at its deadline.
-    /// Checks dual condition: all components Completed before deadline AND none are Lost (BI-008)
-    /// Exempts systems in maintenance mode (FR-016, BI-006)
+    /// Evaluate one HealthMonitorDefinition at its deadline (FR-045).
+    /// Per-component completion conditions (BI-008):
+    ///   - ScheduledJob: received Completed before deadline AND current status != Lost
+    ///   - Service: current status == Normal AND all sub-indicators == Normal
+    /// Exempts systems in maintenance mode (FR-016, BI-006).
+    /// Updates DailyExecution terminal status and sends notifications (FR-013/FR-014).
     /// </summary>
-    Task EvaluateRuleAsync(Guid ruleId, CancellationToken ct = default);
+    Task EvaluateDefinitionAsync(Guid definitionId, CancellationToken ct = default);
+}
+
+// Application/Services/IDailyExecutionCreatorService.cs  ← 新增
+public interface IDailyExecutionCreatorService
+{
+    /// <summary>
+    /// Batch-create DailyExecution instances for all active definitions for the given date (FR-042).
+    /// Skips definitions that already have an instance for the date (BI-012).
+    /// Called by DailyExecutionCreatorJob at DailyExecutionCreateTime (e.g., 05:30).
+    /// </summary>
+    Task CreateForDateAsync(DateOnly date, CancellationToken ct = default);
+
+    /// <summary>
+    /// On station startup: create missing instances for today (FR-044).
+    /// If deadline has not passed → create InProgress; if deadline passed → create Missed.
+    /// </summary>
+    Task RecoverTodayAsync(CancellationToken ct = default);
 }
 
 // Application/Services/ICommandDispatcher.cs
@@ -1013,11 +1136,11 @@ CREATE TABLE IF NOT EXISTS AlertRecords (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_system ON AlertRecords(SystemId, IsGlobalFlagActive);
 
--- Aggregate Health Rules
-CREATE TABLE IF NOT EXISTS AggregateHealthRules (
-    RuleId           TEXT PRIMARY KEY,   -- GUID
+-- Aggregate Health Monitor Definitions  ← 取代 AggregateHealthRules
+CREATE TABLE IF NOT EXISTS HealthMonitorDefinitions (
+    DefinitionId     TEXT PRIMARY KEY,   -- GUID
     SystemId         TEXT NOT NULL REFERENCES MonitoredSystems(SystemId),
-    RuleName         TEXT NOT NULL,
+    Name             TEXT NOT NULL,
     DeadlineTime     TEXT NOT NULL,      -- HH:mm
     ScheduleType     TEXT NOT NULL,      -- 'Daily' | 'Weekly' | 'Cron'
     CronExpression   TEXT,
@@ -1028,12 +1151,30 @@ CREATE TABLE IF NOT EXISTS AggregateHealthRules (
     IsActive         INTEGER NOT NULL DEFAULT 1
 );
 
--- AggregateHealthRule ↔ Component junction
-CREATE TABLE IF NOT EXISTS AggregateHealthRuleComponents (
-    RuleId      TEXT NOT NULL REFERENCES AggregateHealthRules(RuleId),
-    ComponentId TEXT NOT NULL REFERENCES MonitoredComponents(ComponentId),
-    PRIMARY KEY (RuleId, ComponentId)
+-- HealthMonitorDefinition ↔ Component junction  ← 取代 AggregateHealthRuleComponents
+CREATE TABLE IF NOT EXISTS HealthDefinitionComponents (
+    DefinitionId    TEXT NOT NULL REFERENCES HealthMonitorDefinitions(DefinitionId),
+    ComponentId     TEXT NOT NULL REFERENCES MonitoredComponents(ComponentId),
+    ComponentType   TEXT NOT NULL,       -- 'Service' | 'ScheduledJob' (denormalized for eval logic)
+    PRIMARY KEY (DefinitionId, ComponentId)
 );
+
+-- Daily Execution Instances  ← 新增
+CREATE TABLE IF NOT EXISTS DailyExecutions (
+    ExecutionId          TEXT PRIMARY KEY,  -- GUID
+    DefinitionId         TEXT NOT NULL REFERENCES HealthMonitorDefinitions(DefinitionId),
+    SystemId             TEXT NOT NULL,
+    ExecutionDate        TEXT NOT NULL,     -- YYYY-MM-DD
+    Status               TEXT NOT NULL,     -- 'InProgress' | 'Success' | 'Failed' | 'Missed' | 'Exempted'
+    CreatedAt            TEXT NOT NULL,
+    EvaluatedAt          TEXT,
+    FailedComponentsJson TEXT,             -- JSON array of ComponentId strings; nullable
+    MissedReason         TEXT,
+    NotificationSentAt   TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dailyexec_def_date
+    ON DailyExecutions(DefinitionId, ExecutionDate);  -- BI-012: unique per definition per day
+CREATE INDEX IF NOT EXISTS idx_dailyexec_date ON DailyExecutions(ExecutionDate);
 
 -- Execution History (FR-021)
 CREATE TABLE IF NOT EXISTS ExecutionHistory (
@@ -1064,7 +1205,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_time ON AuditLogs(SystemId, OccurredAt);
 -- Notification Inbox (FR-015, FR-020, FR-024)
 CREATE TABLE IF NOT EXISTS NotificationInbox (
     InboxItemId      TEXT PRIMARY KEY,  -- GUID
-    RuleId           TEXT NOT NULL,
+    DefinitionId     TEXT NOT NULL,     ← 取代 RuleId
+    ExecutionId      TEXT,              -- nullable; links to DailyExecution ← 新增
     Title            TEXT NOT NULL,
     Body             TEXT NOT NULL,
     NotificationType TEXT NOT NULL,     -- 'HealthSuccess' | 'HealthFailure'
@@ -1073,7 +1215,7 @@ CREATE TABLE IF NOT EXISTS NotificationInbox (
 );
 ```
 
-**資料保留**：`DataRetentionJob`（Quartz.NET，每日 01:00 執行）刪除 `ExecutionHistory`、`AuditLogs`、`NotificationInbox` 中 `OccurredAt/SentAt < NOW() - 30days` 的記錄 (FR-024)。
+**資料保留**：`DataRetentionJob`（Quartz.NET，每日 01:00 執行）刪除 `ExecutionHistory`、`AuditLogs`、`NotificationInbox`、**`DailyExecutions`** 中 `OccurredAt/SentAt/ExecutionDate < NOW() - 30days` 的記錄 (FR-024)。
 
 ---
 
@@ -1105,17 +1247,19 @@ public sealed class TeamsWebhookException : Exception { ... }
 
 ### 8.2 Error Codes
 
-| Code                      | 場景                               |
-| ------------------------- | ---------------------------------- |
-| `ERR_REASON_REQUIRED`     | 手動操作未提供理由 (BI-001)        |
-| `ERR_SESSION_MISSING`     | Operator Session 姓名為空 (BI-009) |
-| `ERR_COMMAND_TIMEOUT`     | 指令逾時 (FR-027)                  |
-| `ERR_COMMAND_FAILED`      | 被監控系統回應 Failed              |
-| `ERR_ZMQ_DISCONNECTED`    | ZeroMQ Broker 連線中斷             |
-| `ERR_EMAIL_DELIVERY`      | SMTP 發送失敗                      |
-| `ERR_TEAMS_WEBHOOK`       | Teams Webhook 呼叫失敗             |
-| `ERR_SYSTEM_NOT_FOUND`    | 系統 ID 不存在                     |
-| `ERR_COMPONENT_NOT_FOUND` | 元件 ID 不存在                     |
+| Code                              | 場景                                                |
+| --------------------------------- | --------------------------------------------------- |
+| `ERR_REASON_REQUIRED`             | 手動操作未提供理由 (BI-001)                         |
+| `ERR_SESSION_MISSING`             | Operator Session 姓名為空 (BI-009)                  |
+| `ERR_COMMAND_TIMEOUT`             | 指令逾時 (FR-027)                                   |
+| `ERR_COMMAND_FAILED`              | 被監控系統回應 Failed                               |
+| `ERR_ZMQ_DISCONNECTED`            | ZeroMQ Broker 連線中斷                              |
+| `ERR_EMAIL_DELIVERY`              | SMTP 發送失敗                                       |
+| `ERR_TEAMS_WEBHOOK`               | Teams Webhook 呼叫失敗                              |
+| `ERR_SYSTEM_NOT_FOUND`            | 系統 ID 不存在                                      |
+| `ERR_COMPONENT_NOT_FOUND`         | 元件 ID 不存在                                      |
+| `ERR_DEFINITION_EMPTY_COMPONENTS` | Definition 監控元件清單為空 (BI-014) ← 新增         |
+| `ERR_DAILY_EXECUTION_TERMINAL`    | 嘗試更新已進入終態的 DailyExecution (BI-013) ← 新增 |
 
 ### 8.3 Failure Behavior
 
@@ -1231,51 +1375,96 @@ sequenceDiagram
 ## 11. Domain Event Sequence — Aggregate Health Evaluation
 
 ```mermaid
-%%  Sequence Diagram — Aggregate Health Evaluation (FR-013, FR-014)
+%%  Sequence Diagram — Daily Execution Creation (FR-042, FR-044)
+sequenceDiagram
+  participant QTZ as Quartz Scheduler
+  participant DECJ as DailyExecutionCreatorJob
+  participant DECS as DailyExecutionCreatorService
+  participant DEFREPO as HealthMonitorDefinitionRepository
+  participant DEREPO as DailyExecutionRepository
+  participant HUB as MonitorHub (SignalR)
+
+  QTZ ->>+ DECJ: Execute (DailyExecutionCreateTime, e.g. 05:30)
+  DECJ ->>+ DECS: CreateForDateAsync(today)
+  DECS ->>+ DEFREPO: GetAllActiveAsync()
+  DEFREPO -->>- DECS: HealthMonitorDefinition[]
+  loop each Definition
+    DECS ->>+ DEREPO: GetByDefinitionAndDateAsync(id, today)
+    DEREPO -->>- DECS: null (not yet created, BI-012)
+    DECS ->> DECS: new DailyExecution { Status=InProgress }
+    DECS ->>+ DEREPO: AddAsync(execution)
+    DEREPO -->>- DECS: OK
+    DECS ->>+ HUB: PushDailyExecutionUpdatedAsync
+    HUB -->>- DECS: OK
+  end
+  DECS -->>- DECJ: done
+  DECJ -->>- QTZ: JobExecutionComplete
+```
+
+```mermaid
+%%  Sequence Diagram — Aggregate Health Evaluation (FR-045, FR-013, FR-014)
 sequenceDiagram
   participant QTZ as Quartz Scheduler
   participant JOB as AggregateHealthEvaluationJob
   participant AHE as AggregateHealthEvaluationService
-  participant REPO as AggregateHealthRuleRepository
+  participant DEFREPO as HealthMonitorDefinitionRepository
+  participant DEREPO as DailyExecutionRepository
   participant SREP as ComponentStateRepository
   participant ENS as EmailNotificationService
   participant TNS as TeamsNotificationService
   participant NI as NotificationInboxRepository
   participant HUB as MonitorHub (SignalR)
 
-  QTZ ->>+ JOB: Execute (deadline reached)
-  JOB ->>+ AHE: EvaluateRuleAsync(ruleId)
-  AHE ->>+ REPO: GetRuleAsync(ruleId)
-  REPO -->>- AHE: AggregateHealthRule
+  QTZ ->>+ JOB: Execute (deadline reached for definitionId)
+  JOB ->>+ AHE: EvaluateDefinitionAsync(definitionId)
+  AHE ->>+ DEFREPO: GetByIdAsync(definitionId)
+  DEFREPO -->>- AHE: HealthMonitorDefinition
   AHE ->> AHE: Check MaintenanceModeActive? (FR-016/BI-006)
   alt System in maintenance
-    AHE -->> JOB: Exempt, skip evaluation
+    AHE ->>+ DEREPO: UpdateStatusAsync(Exempted)
+    DEREPO -->>- AHE: OK
+    AHE ->>+ HUB: PushDailyExecutionUpdatedAsync
+    HUB -->>- AHE: OK
+    AHE -->> JOB: Exempt, skip notification
   else Normal evaluation
-    AHE ->>+ SREP: GetStatesForComponents(watchedIds)
+    AHE ->>+ DEREPO: GetByDefinitionAndDateAsync(id, today)
+    DEREPO -->>- AHE: DailyExecution (InProgress)
+    AHE ->>+ SREP: GetStatesForComponents(watchedComponentIds)
     SREP -->>- AHE: ComponentState[]
-    AHE ->> AHE: Dual condition check (BI-008): all Completed + none Lost
-    alt All conditions met
+    AHE ->> AHE: Per-component evaluation (BI-008)
+    Note over AHE: ScheduledJob: Completed received + not Lost<br/>Service: Normal + all sub-indicators Normal
+    alt All components meet their conditions
+      AHE ->>+ DEREPO: UpdateStatusAsync(Success)
+      DEREPO -->>- AHE: OK
       AHE ->>+ ENS: SendHealthSummaryAsync (success)
       ENS -->>- AHE: OK
       AHE ->>+ TNS: SendHealthSummaryAsync (success)
       TNS -->>- AHE: OK
-    else Conditions not met AND SendOnFailure=true
-      AHE ->>+ ENS: SendHealthSummaryAsync (failure)
+    else Any component fails AND SendOnFailure=true
+      AHE ->>+ DEREPO: UpdateStatusAsync(Failed, failedComponents)
+      DEREPO -->>- AHE: OK
+      AHE ->>+ ENS: SendHealthSummaryAsync (failure, detail)
       ENS -->>- AHE: OK
-      AHE ->>+ TNS: SendHealthSummaryAsync (failure)
+      AHE ->>+ TNS: SendHealthSummaryAsync (failure, detail)
       TNS -->>- AHE: OK
+    else Any component fails AND SendOnFailure=false
+      AHE ->>+ DEREPO: UpdateStatusAsync(Failed, failedComponents)
+      DEREPO -->>- AHE: OK
     end
     AHE ->>+ NI: AddAsync (persist to inbox)
     NI -->>- AHE: OK
     AHE ->>+ HUB: PushHealthNotificationAsync (Toast)
     HUB -->>- AHE: OK
+    AHE ->>+ HUB: PushDailyExecutionUpdatedAsync
+    HUB -->>- AHE: OK
     AHE -->>- JOB: done
   end
   JOB -->>- QTZ: JobExecutionComplete
-  Note over AHE: BI-002: One notification per rule per evaluation cycle
+  Note over AHE: BI-002: One notification per definition per evaluation cycle
+  Note over AHE: BI-013: DailyExecution terminal state not overwritten after this point
 ```
 
-> **Design Intent**: Quartz.NET 負責 Cron 觸發時機，AggregateHealthEvaluationService 承擔所有業務規則判斷，確保 BI-002（每週期只發一次）由 Job 生命週期天然保證。
+> **Design Intent**: `DailyExecutionCreatorJob` 與 `AggregateHealthEvaluationJob` 職責分離——前者負責每日 05:30 建立實例，後者負責截止時間評估。`HealthEvaluationJob` 以 per-definition Cron 觸發，評估時直接對元件套用 BI-008 的類型分別條件，維護模式系統標記 Exempted 而非略過。
 
 ---
 
@@ -1292,14 +1481,18 @@ builder.Services.AddHostedService<AppSettingsImporter>();   // FR-031 initial im
 builder.Services.AddHostedService<ZeroMQSubscriberService>();
 builder.Services.AddHostedService<ZeroMQCommandService>();
 builder.Services.AddHostedService<HeartbeatTimeoutMonitor>();
+builder.Services.AddHostedService<DailyExecutionStartupRecovery>(); // FR-044: recover today's instances ← 新增
 
 // Quartz
 builder.Services.AddQuartz(q =>
 {
     q.AddJob<AggregateHealthEvaluationJob>(opts => opts.WithIdentity("HealthEval"));
+    q.AddJob<DailyExecutionCreatorJob>(opts => opts.WithIdentity("DailyExecCreate")    // ← 新增
+        .UsingJobData("CreateTime", config["DailyExecutionCreateTime"] ?? "05:30"));
     q.AddJob<DataRetentionJob>(opts => opts.WithIdentity("DataRetention")
         .UsingJobData("RetentionDays", 30));
-    // Health rule triggers are registered dynamically at startup from DB
+    // Health definition deadline triggers are registered dynamically at startup from DB
+    // DailyExecutionCreatorJob fires daily at DailyExecutionCreateTime (e.g., 05:30 cron)
 });
 builder.Services.AddQuartzHostedService(opt => opt.WaitForJobsToComplete = true);
 
@@ -1308,7 +1501,8 @@ builder.Services.AddScoped<IMonitoredSystemRepository, MonitoredSystemRepository
 builder.Services.AddScoped<IMonitoredComponentRepository, MonitoredComponentRepository>();
 builder.Services.AddScoped<IComponentStateRepository, ComponentStateRepository>();
 builder.Services.AddScoped<IAlertRecordRepository, AlertRecordRepository>();
-builder.Services.AddScoped<IAggregateHealthRuleRepository, AggregateHealthRuleRepository>();
+builder.Services.AddScoped<IHealthMonitorDefinitionRepository, HealthMonitorDefinitionRepository>(); // ← 取代 IAggregateHealthRuleRepository
+builder.Services.AddScoped<IDailyExecutionRepository, DailyExecutionRepository>();                  // ← 新增
 builder.Services.AddScoped<IExecutionHistoryRepository, ExecutionHistoryRepository>();
 builder.Services.AddScoped<IAuditLogRepository, AuditLogRepository>();
 builder.Services.AddScoped<INotificationInboxRepository, NotificationInboxRepository>();
@@ -1318,6 +1512,7 @@ builder.Services.AddScoped<IHeartbeatProcessor, HeartbeatProcessorService>();
 builder.Services.AddSingleton<IStateRollupService, StateRollupService>();
 builder.Services.AddScoped<IAlertEvaluationService, AlertEvaluationService>();
 builder.Services.AddScoped<IAggregateHealthEvaluationService, AggregateHealthEvaluationService>();
+builder.Services.AddScoped<IDailyExecutionCreatorService, DailyExecutionCreatorService>();          // ← 新增
 builder.Services.AddScoped<ICommandDispatcher, ZeroMQCommandDispatcher>();
 
 // Notifications
