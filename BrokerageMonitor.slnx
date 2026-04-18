@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BrokerageMonitor.Application/BrokerageMonitor.Application.csproj" />
+    <Project Path="src/BrokerageMonitor.Domain/BrokerageMonitor.Domain.csproj" />
+    <Project Path="src/BrokerageMonitor.Infrastructure/BrokerageMonitor.Infrastructure.csproj" />
+    <Project Path="src/BrokerageMonitor.MailAgent/BrokerageMonitor.MailAgent.csproj" />
+    <Project Path="src/BrokerageMonitor.Web/BrokerageMonitor.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BrokerageMonitor.Application.Tests/BrokerageMonitor.Application.Tests.csproj" />
+    <Project Path="tests/BrokerageMonitor.Domain.Tests/BrokerageMonitor.Domain.Tests.csproj" />
+    <Project Path="tests/BrokerageMonitor.Infrastructure.Tests/BrokerageMonitor.Infrastructure.Tests.csproj" />
+  </Folder>
+</Solution>
