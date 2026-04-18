@@ -215,11 +215,11 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
         string  DeadlineTime,
         string  ScheduleType,
         string? CronExpression,
-        int?    DayOfWeek,
+        long?   DayOfWeek,
         string  EmailRecipients,
         string? TeamsWebhookUrl,
-        int     SendOnFailure,
-        int     IsActive);
+        long    SendOnFailure,
+        long    IsActive);
 
     private sealed record JunctionRow(
         string DefinitionId,

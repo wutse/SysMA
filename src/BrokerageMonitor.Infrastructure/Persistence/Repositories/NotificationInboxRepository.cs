@@ -82,5 +82,5 @@ public sealed class NotificationInboxRepository : INotificationInboxRepository
         string  Body,
         string  NotificationType,
         string  SentAt,
-        int     IsRead);
+        long    IsRead);
 }
