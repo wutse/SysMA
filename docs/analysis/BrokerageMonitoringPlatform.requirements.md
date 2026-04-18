@@ -1,24 +1,25 @@
 # 券商內部系統排程與服務監控站台 — 需求確認文件
 
 > **建立日期**: 2026-04-17  
-> **最後更新**: 2026-04-18（v1.9 — 增修 Stopped 狀態支援手動停止情境）
-> **狀態**: 確認完成（Q&A 已完成，含後續補充確認至 Round 9）  
+> **最後更新**: 2026-04-18（v2.0 — Round 5 新增郵件渠道接入需求（FR-048 ~ FR-051）、Local Agent 子元件、BI-016/017）
+> **狀態**: 確認完成（Q&A 已完成，含後續補充確認至 Round 5）  
 > **階段**: Phase 1
 
 ---
 
 ## 1. Feature Summary
 
-為券商內部開發一個集中式 Web 監控站台，透過 ZeroMQ XSUB 連線至獨立 Broker，接收 約 20 個證券期貨相關內部系統的即時狀態。**每個被監控系統為一個邏輯容器，由 n 個 背景服務（Service）與 m 個排程任務（Scheduled Job）組合而成，監控粒度以元件（Component）為單位**；訊息由獨立 Adapter 服務統一格式後推送。站台以 **Blazor Server + SignalR** 提供即時儀表板、異常告警（站台 Pop-up **及** Email 至系統級告警收件 人）與告警確認（Acknowledge）、手動更改元件狀態（狀態覆寫）、維護模式、操作稽 核紀錄，以及聚合式健康確認通知（Email via Mail Relay、站台通知中心、Microsoft Teams Webhook per 規則）。所有資料（設定、歷史、稽核日誌、通知）存於單一 **SQLite**，以 **Kestrel self-hosted .exe** 部署於 Windows，無需 IIS 或帳號驗證。
+為券商內部開發一個集中式 Web 監控站台，透過 ZeroMQ XSUB 連線至獨立 Broker，接收 約 20 個證券期貨相關內部系統的即時狀態。**每個被監控系統為一個邏輯容器，由 n 個 背景服務（Service）與 m 個排程任務（Scheduled Job）組合而成，監控粒度以元件（Component）為單位**；訊息由獨立 Adapter 服務統一格式後推送。除 ZeroMQ 心跳渠道外，系統另支援**郵件渠道**：部署於維運人員個人主機的 **Mail Relay Local Agent** 透過 Outlook COM 元件定時輪詢郵件，將原始郵件內容轉送至 ZeroMQ Broker，由站台依元件層級郵件解析規則（From + Subject 比對）解析成功/失敗並更新元件狀態。站台以 **Blazor Server + SignalR** 提供即時儀表板、異常告警（站台 Pop-up **及** Email 至系統級告警收件 人）與告警確認（Acknowledge）、手動更改元件狀態（狀態覆寫）、維護模式、操作稽 核紀錄，以及聚合式健康確認通知（Email via Mail Relay、站台通知中心、Microsoft Teams Webhook per 規則）。所有資料（設定、歷史、稽核日誌、通知）存於單一 **SQLite**，以 **Kestrel self-hosted .exe** 部署於 Windows，無需 IIS 或帳號驗證。
 
 ---
 
 ## 2. Actor List
 
-| 角色                              | 說明                                                                                                                                        |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **維運人員 (Operator)**           | 可存取站台的所有內部人員，具備完整檢視與操作權限。開啟站台時填寫姓名作為 Session 識別，無帳號驗證，所有操作稽核日誌自動帶入姓名。           |
-| **被監控系統 (Monitored System)** | 主動推送心跳、執行狀態訊息至獨立 ZeroMQ Broker 的內部系統（證券/期貨相關）；訊息由獨立 Adapter 服務統一格式後發送，監控站台以鬆耦合方式接收 |
+| 角色                                      | 說明                                                                                                                                                                                  |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **維運人員 (Operator)**                   | 可存取站台的所有內部人員，具備完整檢視與操作權限。開啟站台時填寫姓名作為 Session 識別，無帳號驗證，所有操作稽核日誌自動帶入姓名。                                                     |
+| **被監控系統 (Monitored System)**         | 主動推送心跳、執行狀態訊息至獨立 ZeroMQ Broker 的內部系統（證券/期貨相關）；訊息由獨立 Adapter 服務統一格式後發送，監控站台以鬆耦合方式接收                                           |
+| **郵件轉送代理 (Mail Relay Local Agent)** | 部署於維運人員個人主機的輕量代理程式；透過 Outlook COM 元件定時輪詢指定收件匣，將原始郵件（From、Subject、Body、接收時間）封裝後透過 ZeroMQ Broker 轉送至監控站台；不包含任何解析邏輯 |
 
 ---
 
@@ -160,6 +161,27 @@
 
 - **FR-040**：儀表板在元件列內以巢狀方式展開顯示子指標，每個子指標呈現：名稱、狀態圖示，以及數值指標（若存在）。數值指標為**自服務啟動以來的累計值**，服務重啟後歸零重算（含盤中異常重啟）；站台直接顯示心跳訊息中最後一次回報的數值，不在站台端進行累加計算。
 
+### 郵件渠道接入（Mail Channel Integration）
+
+- **FR-048**：系統提供一個**郵件轉送代理（Mail Relay Local Agent）**，以獨立 Windows Console App（.exe）部署於維運人員個人主機，透過 Outlook COM 元件**定時輪詢**指定收件匣的未讀郵件（輪詢間隔可設定，單位：秒）。讀取郵件後，將原始郵件內容（寄件者 `From`、主旨 `Subject`、郵件本文 `Body`、接收時間 `ReceivedAt`）封裝為標準訊息格式，透過現有 ZeroMQ Broker 推送至監控站台。ZeroMQ Broker 位址、輪詢間隔、Outlook 收件匣名稱等設定項目存於 `appsettings.json`。
+
+- **FR-049**：監控站台的**元件設定頁面**（FR-031 管理介面）支援針對每個元件個別設定一條**郵件解析規則（Mail Parsing Rule）**，規則包含以下欄位：
+  - **寄件者條件（From Pattern）**：精確比對或 Wildcard（`*`）比對寄件者地址
+  - **主旨條件（Subject Pattern）**：包含關鍵字比對（Substring Match）
+  - **成功關鍵字（Success Keywords）**：主旨或本文含此關鍵字時解析為成功（可設定多個，OR 關係）
+  - **失敗關鍵字（Failure Keywords）**：主旨或本文含此關鍵字時解析為失敗（可設定多個，OR 關係）
+  > 每個元件 Phase 1 最多設定一條郵件解析規則。未設定規則的元件不參與郵件渠道匹配。
+
+- **FR-050**：監控站台收到 Local Agent 轉送的郵件訊息後，執行以下解析流程：
+  1. **元件匹配**：依所有啟用中元件的郵件解析規則，以 From Pattern **且** Subject Pattern 雙條件篩選目標元件。若無匹配規則，郵件訊息丟棄並記錄警告至系統日誌（不觸發任何告警）。
+  2. **成功/失敗判斷**：依 Failure Keywords 優先原則，若郵件主旨或本文包含任一失敗關鍵字，判定為失敗；否則若包含任一成功關鍵字，判定為成功；若兩者皆未匹配，訊息丟棄並記錄警告日誌。
+  3. **狀態映射**：依元件類型套用對應狀態：
+     - **排程任務（ScheduledJob）**：成功 → `Completed`，失敗 → `Failed`
+     - **背景服務（Service）**：成功 → `Normal`，失敗 → `Error`
+  4. 解析完成後，以此狀態更新元件即時狀態，並依標準流程觸發告警通知（FR-010）、聚合健康進度追蹤（FR-034）及歷史記錄（FR-021）。
+
+- **FR-051**：郵件渠道觸發的狀態更新與 ZeroMQ 心跳渠道觸發的狀態更新在站台內遵循**完全相同**的後續處理流程，包含：Worst-case roll-up（FR-001）、告警通知（FR-010）、聚合健康事件追蹤（FR-034）、歷史記錄（FR-021）；不增設任何郵件渠道專屬的告警抑制或豁免邏輯。
+
 ---
 
 ## 4. Business Invariants
@@ -181,23 +203,26 @@
 - **BI-013**：Daily Execution 實例一旦進入終態（Success / Failed / Missed / Exempted），不得再被覆寫或重新評估；補建邏輯僅適用於實例尚未存在的情況。
 - **BI-014**：Definition 監控元件清單中必須至少包含一個元件（服務或排程任務），不得為空清單；空清單的 Definition 不得被啟用。
 - **BI-015**：Daily Execution 實例的建立（含每日批次與啟動補建）必須嚴格比對 Definition 的執行週期（Schedule）。只有在當前日期與執行週期匹配時，才允許建立當日的實例；不匹配的日期不得產生任何狀態（含 Missed）的實例。
+- **BI-016**：郵件解析規則的成功關鍵字與失敗關鍵字**不得重疊**；系統應於設定時進行驗證並拒絕儲存重疊規則。若因邏輯缺陷導致同一封郵件同時匹配兩組關鍵字，**失敗優先（Failure takes precedence）**，一律判定為失敗。
+- **BI-017**：郵件渠道與 ZeroMQ 心跳渠道為**並行互補**關係；兩個渠道均可獨立觸發元件狀態更新，後觸發者以最新狀態覆蓋（Last-write-wins），與單一渠道來源的狀態更新享有完全相同的後續處理權重。
 
 ---
 
 ## 5. Technology Decisions
 
-| 項目                   | 決策                                                                                                                                                                                         |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **前端框架**           | Blazor Server                                                                                                                                                                                |
-| **即時推送**           | ASP.NET Core SignalR（WebSocket）                                                                                                                                                            |
-| **資料庫**             | SQLite 單一檔案（涵蓋設定、歷史、稽核日誌、通知記錄）                                                                                                                                        |
-| **ZeroMQ 拓撲**        | 站台 XSUB 連線至獨立 ZeroMQ Broker 訂閱訊息                                                                                                                                                  |
-| **訊息格式**           | WMM 現有排程與服務以原有格式推送至 WMM 內部 MQ；新建 立的 **Adapter 服務**從內部 MQ 讀取、轉換格式後推送至 ZeroMQ Broker；監控站台 XSUB 以鬆耦合方式接收。WMM 現有系統**無需修改**訊息格式。 |
-| **Email 發送**         | 公司 Mail Relay（SMTP Host 設定於 appsettings.json，無需帳密）                                                                                                                               |
-| **Teams 整合**         | 每條聚合規則各自設定獨立的 Webhook URL                                                                                                                                                       |
-| **部署方式**           | Kestrel self-hosted .exe（Windows），不透過 IIS                                                                                                                                              |
-| **被監控系統設定來源** | 初始由設定檔匯入，後續透過 UI 管理，資料存 SQLite                                                                                                                                            |
-| **操作人識別**         | Session 姓名（開啟站台時填寫一次），無帳號驗證                                                                                                                                               |
+| 項目                       | 決策                                                                                                                                                                                         |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **前端框架**               | Blazor Server                                                                                                                                                                                |
+| **即時推送**               | ASP.NET Core SignalR（WebSocket）                                                                                                                                                            |
+| **資料庫**                 | SQLite 單一檔案（涵蓋設定、歷史、稽核日誌、通知記錄）                                                                                                                                        |
+| **ZeroMQ 拓撲**            | 站台 XSUB 連線至獨立 ZeroMQ Broker 訂閱訊息                                                                                                                                                  |
+| **訊息格式**               | WMM 現有排程與服務以原有格式推送至 WMM 內部 MQ；新建 立的 **Adapter 服務**從內部 MQ 讀取、轉換格式後推送至 ZeroMQ Broker；監控站台 XSUB 以鬆耦合方式接收。WMM 現有系統**無需修改**訊息格式。 |
+| **Email 發送**             | 公司 Mail Relay（SMTP Host 設定於 appsettings.json，無需帳密）                                                                                                                               |
+| **Teams 整合**             | 每條聚合規則各自設定獨立的 Webhook URL                                                                                                                                                       |
+| **部署方式**               | Kestrel self-hosted .exe（Windows），不透過 IIS                                                                                                                                              |
+| **被監控系統設定來源**     | 初始由設定檔匯入，後續透過 UI 管理，資料存 SQLite                                                                                                                                            |
+| **操作人識別**             | Session 姓名（開啟站台時填寫一次），無帳號驗證                                                                                                                                               |
+| **Mail Relay Local Agent** | Windows Console App（.exe），Outlook COM 元件 + ZeroMQ PUSH，部署於維運人員個人主機；設定存於 `appsettings.json`                                                                             |
 
 ---
 
@@ -219,7 +244,7 @@
 
 ---
 
-> **Open Issues 追蹤**：所有議題確認記錄（OI-001 ~ OI-023）請參見 [`BrokerageMonitoringPlatform.open-issues.md`](BrokerageMonitoringPlatform.open-issues.md)。
+> **Open Issues 追蹤**：所有議題確認記錄（OI-001 ~ OI-024）請參見 [`BrokerageMonitoringPlatform.open-issues.md`](BrokerageMonitoringPlatform.open-issues.md)。
 
 ---
 
@@ -241,3 +266,5 @@
 | **聚合規則定義 (Definition)**                    | 聚合健康規則的靜態範本，定義任務清單、截止時間、執行週期、通知設定等；取代舊有「規則（Rule）」概念                   |
 | **每日執行 (Daily Execution)**                   | 系統依 Definition 每日自動建立的執行實例，追蹤當日任務完成狀態與最終結果（進行中 / 成功 / 失敗 / 缺失 / 豁免）       |
 | **每日建立時間 (DailyExecutionCreateTime)**      | 全站台統一設定（appsettings.json）的每日實例批次建立時間，預設 05:30，所有啟用中 Definition 於此時間點同步建立實例   |
+| **郵件轉送代理 (Mail Relay Local Agent)**        | 部署於維運人員個人主機的輕量代理程式，透過 Outlook COM 元件定時輪詢郵件並轉送至 ZeroMQ Broker；本身不含解析邏輯      |
+| **郵件解析規則 (Mail Parsing Rule)**             | 元件層級設定，定義郵件 From/Subject 匹配條件與成功/失敗關鍵字；站台依此解析轉送郵件並映射為對應元件狀態              |
