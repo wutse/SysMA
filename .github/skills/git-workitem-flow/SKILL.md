@@ -48,7 +48,20 @@ git checkout arch
 git checkout -b {id}
 ```
 
-### Step 3 — Implement in Order
+### Step 3 — Check for Child Items (Depth-First)
+
+**Before implementing the current work item**, scan the backlog CSV for rows whose `ParentId` matches the current `WorkItemId`.
+
+- If **child items exist**: recursively apply Steps 1–6 for **each child** (in CSV order) before implementing the current item.
+  - Create the child branch (from the current branch).
+  - Recurse into the child's own children, if any.
+  - Implement and commit the child.
+  - Merge the child back to the current branch.
+- If **no child items exist**: proceed directly to Step 4 (implementation).
+
+This ensures a **depth-first** traversal: leaves are implemented and merged up before their parents.
+
+### Step 4 — Implement in Order
 
 Process work items in the sequence defined by the backlog CSV (ordered by `WorkItemId`).
 
@@ -56,7 +69,7 @@ Process work items in the sequence defined by the backlog CSV (ordered by `WorkI
 - Implement one work item at a time; complete it fully before moving to the next.
 - Follow all `AcceptanceCriteria` in the CSV row before marking an item done.
 
-### Step 4 — Commit After Each Item
+### Step 5 — Commit After Each Item
 
 After completing each work item, stage and commit on its branch. Do **not** push:
 
@@ -76,7 +89,7 @@ Commit message conventions:
 
 **Never push** (`git push`) during development. Push only after explicit instruction.
 
-### Step 5 — Merge to Parent on Completion
+### Step 6 — Merge to Parent on Completion
 
 Once all Story branches under an Epic are committed, merge them into the Epic branch in order:
 
@@ -101,6 +114,7 @@ git merge --no-ff {id} -m "merge(arch): integrate {id} - {EpicTitle}"
 | Parent branch missing                  | Create parent branch first (recursive)               |
 | Work item has no ParentId              | Branch from project integration branch (`arch`)      |
 | Work item already has a branch         | Switch to existing branch; do not recreate           |
+| Work item has child items in CSV       | Create branch, then recursively process children (depth-first) before implementing current item |
 | Acceptance criteria not fully met      | Do not commit; continue implementing                 |
 | All stories under an epic are done     | Merge all story branches into epic branch in order   |
 | Merge conflict                         | Resolve manually, then commit the resolution         |
@@ -109,7 +123,9 @@ git merge --no-ff {id} -m "merge(arch): integrate {id} - {EpicTitle}"
 
 - [ ] Parent branch exists before creating child branch
 - [ ] Branch name matches convention (lowercase ID)
-- [ ] Work items processed in CSV order (by WorkItemId)
+- [ ] Child items checked before implementing any work item
+- [ ] Children processed depth-first (all descendants done before parent)
+- [ ] Work items processed in CSV order (by WorkItemId) within the same level
 - [ ] Each commit is scoped to exactly one work item
 - [ ] Commit message references WorkItemId, Title, and FRReference
 - [ ] No `git push` executed during development
@@ -119,34 +135,57 @@ git merge --no-ff {id} -m "merge(arch): integrate {id} - {EpicTitle}"
 
 ## Example Sequence
 
-Given backlog rows: `EP-001 → US-001, US-002, US-003`:
+Given backlog rows: `EP-001 → US-001 → TS-001, TS-002; US-002`:
 
 ```powershell
-# 1. Create Epic branch
+# 1. Start EP-001 — create Epic branch
 git checkout arch
 git checkout -b ep-001
 
-# 2. Create first Story branch
+# 2. EP-001 has children (US-001, US-002) → process children first (depth-first)
+
+# 3. Start US-001 — create Story branch from EP-001
 git checkout ep-001
 git checkout -b us-001
 
-# 3. Implement US-001, then commit
+# 4. US-001 has children (TS-001, TS-002) → process children first
+
+# 5. Start TS-001 — create Task branch from US-001
+git checkout us-001
+git checkout -b ts-001
+# TS-001 has no children → implement directly
 git add -A
-git commit -m "feat(us-001): establish solution architecture and project references
+git commit -m "feat(ts-001): ...
+- Implements TS-001: ..."
 
-- Implements US-001: 建立 Solution 架構與專案參考
-- Acceptance criteria met: BrokerageMonitor.sln created, 7 projects, dotnet build OK
-- FR references: N/A"
+# 6. Merge TS-001 back to US-001
+git checkout us-001
+git merge --no-ff ts-001 -m "merge(us-001): integrate ts-001 - ..."
 
-# 4. Merge US-001 back to EP-001
+# 7. Start TS-002 — create Task branch from US-001
+git checkout -b ts-002
+# implement and commit ...
+git checkout us-001
+git merge --no-ff ts-002 -m "merge(us-001): integrate ts-002 - ..."
+
+# 8. All children of US-001 done → now implement US-001 itself, then commit
+git checkout us-001
+git add -A
+git commit -m "feat(us-001): ...
+- Implements US-001: ..."
+
+# 9. Merge US-001 back to EP-001
 git checkout ep-001
-git merge --no-ff us-001 -m "merge(ep-001): integrate us-001 - Solution Architecture"
+git merge --no-ff us-001 -m "merge(ep-001): integrate us-001 - ..."
 
-# 5. Create next Story branch from EP-001
+# 10. Start US-002 — no children → implement directly
 git checkout -b us-002
-# ... implement and commit ...
+git add -A
+git commit -m "feat(us-002): ..."
+git checkout ep-001
+git merge --no-ff us-002 -m "merge(ep-001): integrate us-002 - ..."
 
-# 6. After all stories done, merge EP-001 to arch
+# 11. All children of EP-001 done → merge EP-001 to arch
 git checkout arch
 git merge --no-ff ep-001 -m "merge(arch): integrate ep-001 - Project Foundation"
 ```
