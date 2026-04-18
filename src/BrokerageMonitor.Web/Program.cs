@@ -1,6 +1,8 @@
+using BrokerageMonitor.Infrastructure.Scheduling;
 using BrokerageMonitor.Web.Components;
 using NLog;
 using NLog.Web;
+using Quartz;
 
 // Initialise NLog early so startup errors are captured
 var logger = LogManager.Setup()
@@ -14,6 +16,9 @@ try
     // Replace default logging with NLog
     builder.Logging.ClearProviders();
     builder.Host.UseNLog();
+
+    // Register Quartz.NET in-memory scheduler
+    builder.Services.AddQuartzScheduler();
 
     // Add services to the container.
     builder.Services.AddRazorComponents()
@@ -35,6 +40,14 @@ try
 
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode();
+
+    // Schedule SmokeTestJob (startup verification — runs once at 01:00 each day)
+    var scheduler = await app.Services
+        .GetRequiredService<ISchedulerFactory>()
+        .GetScheduler();
+    await QuartzJobScheduler.ScheduleCronJobAsync<SmokeTestJob>(
+        scheduler,
+        cronExpression: "0 0 1 * * ?");
 
     app.Run();
 }
