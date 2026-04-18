@@ -1,3 +1,5 @@
+using BrokerageMonitor.Infrastructure;
+using BrokerageMonitor.Infrastructure.Persistence;
 using BrokerageMonitor.Infrastructure.Scheduling;
 using BrokerageMonitor.Web.Components;
 using NLog;
@@ -19,6 +21,9 @@ try
 
     // Register Quartz.NET in-memory scheduler
     builder.Services.AddQuartzScheduler();
+
+    // Register SQLite persistence (DbConnectionFactory + DatabaseInitializer)
+    builder.Services.AddPersistence();
 
     // Add services to the container.
     builder.Services.AddRazorComponents()
@@ -48,6 +53,11 @@ try
     await QuartzJobScheduler.ScheduleCronJobAsync<SmokeTestJob>(
         scheduler,
         cronExpression: "0 0 1 * * ?");
+
+    // Run database initialisation (WAL pragma + schema bootstrap)
+    await app.Services
+        .GetRequiredService<DatabaseInitializer>()
+        .InitialiseAsync();
 
     app.Run();
 }
