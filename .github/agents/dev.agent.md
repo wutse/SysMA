@@ -1,19 +1,55 @@
-# Role: Senior C# Developer
-# Focus: Clean Code, Design Patterns, Async Programming
+# Senior C# Developer Implementation Standards
 
-## Implementation Rules
-1. **DDD Encapsulation**: 
-   - Entity Setter 必須為 `private`。
-   - 使用 Constructor 或 Factory Method 建立對象。
-2. **Design Patterns Applied**:
-   - **Strategy**: 取代複雜的 `if/else` 或 `switch` 邏輯。
-   - **Factory**: 處理複雜對象的實例化。
-   - **Decorator**: 用於跨切面邏輯（如 Logging, Caching）。
-   - **MediatR**: 實作 CQRS 與內部分離。
-3. **Efficiency**: 
-   - 必須使用 `async/await` 並傳遞 `CancellationToken`。
-   - 遵循 LINQ 最佳實踐，避免不必要的記憶體配置。
+This document defines the architectural standards and coding practices for the `src/` directory, focusing on Clean Code, Domain-Driven Design (DDD), and high-performance Asynchronous Programming.
 
-## Context Focus
-- 僅關注 `src/` 目錄下的實作。
-- 不涉及測試、分析或審查階段的內容。
+---
+
+## 1. Core Principles (SOLID + Least Knowledge)
+
+All implementations must adhere to the six fundamental pillars of Object-Oriented Design:
+
+1.  **S - Single Responsibility Principle (SRP)**: A class should have only one reason to change. Use `MediatR` handlers to isolate business logic.
+2.  **O - Open/Closed Principle (OCP)**: Software entities should be open for extension but closed for modification. Leverage the **Strategy** and **Decorator** patterns to add behavior.
+3.  **L - Liskov Substitution Principle (LSP)**: Objects of a superclass should be replaceable with objects of its subclasses without breaking the application.
+4.  **I - Interface Segregation Principle (ISP)**: Clients should not be forced to depend on methods they do not use. Keep interfaces lean and focused.
+5.  **D - Dependency Inversion Principle (DIP)**: Depend on abstractions, not concretions.
+6.  **LoD - Law of Demeter**: Minimize coupling. An object should only communicate with its immediate friends; avoid "train wrecks" like `order.Customer.Profile.Address.City`.
+
+---
+
+## 2. DDD & Encapsulation Rules
+
+To protect the integrity of the Domain Model:
+
+*   **Private Setters**: All Entity and Aggregate Root properties must have `private` or `init` setters. State changes must occur via explicit domain methods (e.g., `RenameItem(...)` instead of `Name = "..."`).
+*   **Object Creation**: Direct instantiation via `new` is discouraged for complex entities. Use **Constructors** with validation or **Factory Methods** to ensure the object is always in a valid state.
+
+---
+
+## 3. Design Pattern Standards
+
+Replace procedural logic with robust design patterns:
+
+*   **Strategy Pattern**: Use to eliminate complex `if/else` or `switch` blocks when multiple algorithms or behaviors exist for a single task.
+*   **Factory Pattern**: Centralize the logic for creating complex objects or hierarchies.
+*   **Decorator Pattern**: Implement cross-cutting concerns such as **Logging**, **Caching**, or **Validation** without polluting the core business logic.
+*   **MediatR (CQRS)**: Use to decouple the entry point (API/UI) from the domain logic by separating Reads (Queries) and Writes (Commands).
+
+---
+
+## 4. Efficiency & Async Programming
+
+Code performance and resource management are non-negotiable:
+
+*   **Async/Await**: All I/O-bound operations must be asynchronous. 
+*   **Token Propagation**: Always accept and pass a `CancellationToken` through the entire call stack to support graceful cancellation.
+*   **LINQ Best Practices**: 
+    *   Avoid unnecessary memory allocations (e.g., avoid `.ToList()` until strictly necessary).
+    *   Use `IQueryable` for database filtering to ensure logic is executed at the data source level.
+    *   Prefer `ValueTask` for high-frequency async methods where the result is often available synchronously.
+
+---
+
+## 5. Directory Scope
+
+These rules apply strictly to the implementation phase within the **`src/`** directory. All logic must be "Clean by Design" before moving to subsequent lifecycle stages.

@@ -41,7 +41,7 @@ Every design decision must be traceable back to a confirmed requirement (FR-XXX 
 
 ## Output Standards
 - **Traceability**: Each design decision must reference its driving requirement (FR-XXX / NFR).
-- **Diagrams**: All `mermaid` diagrams must follow the rules in `.github/skills/mermaid-diagram.skill.md`.
+- **Diagrams**: All `mermaid` diagrams must follow the rules in `.github/skills/gen-mermaid-diagram/SKILL.md`.
 - **C# Conventions**: Use C# 12 / .NET 8; follow Clean Architecture naming conventions.
 - **Clarity**: Specifications must be detailed enough for a developer to implement without further clarification.
 - **Mandatory Deliverables**:

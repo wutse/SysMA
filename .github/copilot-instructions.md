@@ -17,7 +17,7 @@ To maximize token efficiency and maintain focus, follow these routing rules:
 - **Avoid Cross-Talk**: Do not use testing rules during development, and do not use implementation details during analysis.
 - **Token Efficiency**: Only include relevant information from the respective agent file. Do not include any content from other agent files.
 - **Output Format**: Follow the output standards defined in each agent file. For example, if the analysis agent requires Mermaid diagrams, only output those diagrams without additional explanations.
-- **Mermaid Diagrams**: ALL Mermaid diagrams generated in this project MUST strictly follow the rules defined in `#file:.github/skills/mermaid-diagram.skill.md`. This applies to every agent, every file, and every context — no exceptions.
+- **Mermaid Diagrams**: ALL Mermaid diagrams generated in this project MUST strictly follow the rules defined in `#file:.github/skills/gen-mermaid-diagram/SKILL.md`. This applies to every agent, every file, and every context — no exceptions.
 
 ---
 <br/><br/><br/>
