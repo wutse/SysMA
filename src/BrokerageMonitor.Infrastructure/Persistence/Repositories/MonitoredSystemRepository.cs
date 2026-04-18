@@ -70,13 +70,16 @@ public sealed class MonitoredSystemRepository : IMonitoredSystemRepository
         using var conn = _factory.CreateConnection();
         const string sql = """
             UPDATE MonitoredSystems
-            SET IsMaintenanceActive = @Active, UpdatedAt = @Now
+            SET IsMaintenanceActive = @Active,
+                MaintenanceOperator = @Operator,
+                UpdatedAt           = @Now
             WHERE SystemId = @SystemId;
             """;
 
         await conn.ExecuteAsync(new CommandDefinition(sql, new
         {
             Active   = active ? 1 : 0,
+            Operator = active ? "System" : (string?)null,
             Now      = DateTimeOffset.UtcNow.ToString("O"),
             SystemId = systemId
         }, cancellationToken: ct));
@@ -108,9 +111,9 @@ public sealed class MonitoredSystemRepository : IMonitoredSystemRepository
         string MarketStart,
         string MarketEnd,
         string AlertRecipients,
-        int    IsMaintenanceActive,
+        long   IsMaintenanceActive,
         string? MaintenanceOperator,
-        int    IsActive,
+        long   IsActive,
         string CreatedAt,
         string UpdatedAt);
 }

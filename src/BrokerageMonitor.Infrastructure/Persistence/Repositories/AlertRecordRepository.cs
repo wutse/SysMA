@@ -118,7 +118,7 @@ public sealed class AlertRecordRepository : IAlertRecordRepository
         string  ComponentId,
         string  AlertStatus,
         string  OccurredAt,
-        int     IsGlobalFlagActive,
+        long    IsGlobalFlagActive,
         string? AcknowledgedBy,
         string? AcknowledgedAt);
 }
