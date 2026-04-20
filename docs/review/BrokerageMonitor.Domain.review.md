@@ -1,8 +1,23 @@
 # Code Review: BrokerageMonitor.Domain
 
 **Reviewer**: Chief Software Architect (GitHub Copilot)
-**Date**: 2026-04-20
+**Date**: 2026-04-20 (Updated after `arch` branch merge)
 **Scope**: `src/BrokerageMonitor.Domain` — Aggregates, ValueObjects, Events, Repositories
+**Application Layer**: `src/BrokerageMonitor.Application` reviewed for Domain interaction correctness
+
+---
+
+## 🔄 Re-Review Summary (post `arch` merge)
+
+| Violation | Status | Notes |
+|-----------|--------|-------|
+| 🔴 V-01 `SetMaintenanceModeAsync` bypasses domain | **⚠️ STILL OPEN** | Dead API — never called, but still declared & implemented with a hardcoded BI-009 violation |
+| 🟠 V-02 `AuditLogEntry`/`ExecutionHistoryEntry` in `Repositories/` | **⚠️ STILL OPEN** | Unchanged |
+| 🟠 V-03 `AlertRecord.Acknowledge()` re-acknowledgement | **⚠️ STILL OPEN** | Plus new compound issue: `AcknowledgeBySystemAsync` bypasses aggregate entirely |
+| 🟠 V-04 `int.Parse` in cron parser | **⚠️ STILL OPEN** | Unchanged |
+| ✅ `ToggleMaintenanceModeHandler` uses correct aggregate path | **RESOLVED** | Correctly calls `ActivateMaintenance` / `DeactivateMaintenance` + `UpsertAsync` |
+
+---
 
 ---
 
@@ -56,51 +71,74 @@ All `IXxxRepository` interfaces live in `BrokerageMonitor.Domain.Repositories`, 
 
 ## ⚠️ Critical Violations
 
-### 🔴 V-01 — `SetMaintenanceModeAsync` Bypasses Domain Logic
+### 🔴 V-01 — `SetMaintenanceModeAsync` is a Dead, Dangerous API *(STILL OPEN)*
 
-**File**: `Repositories/IMonitoredSystemRepository.cs`, line 10
+**Files**: `Repositories/IMonitoredSystemRepository.cs:10`, `Infrastructure/.../MonitoredSystemRepository.cs:68`
+
+**Good news**: `ToggleMaintenanceModeHandler` correctly calls `system.ActivateMaintenance(operatorName)` / `system.DeactivateMaintenance(operatorName)` + `UpsertAsync` — the happy path is correct. ✅
+
+**Bad news**: `SetMaintenanceModeAsync` still exists on the interface and infrastructure, is never called, and its implementation contains a **hardcoded BI-009 violation**:
 
 ```csharp
-Task SetMaintenanceModeAsync(string systemId, bool active, string operatorName, CancellationToken ct = default);
+// MonitoredSystemRepository.cs:82 — BI-009 violated: real operator replaced with "System"
+Operator = active ? "System" : (string?)null,
 ```
 
-> **Note**: The current signature in code omits `operatorName` — this makes the bypass even more severe since BI-009 requires an operator name to be recorded.
+Any future developer who discovers and calls this method will:
+1. Bypass `ActivateMaintenance()` / `DeactivateMaintenance()` domain guards
+2. Record `"System"` as the operator name — a direct BI-009 violation
+3. Leave `MaintenanceOperator = null` on deactivation, inconsistent with aggregate state
 
-The repository interface exposes a **raw persistence operation** that circumvents the aggregate's business rules (`ActivateMaintenance` / `DeactivateMaintenance` enforce BI-009). Any caller of `SetMaintenanceModeAsync` can toggle maintenance without the domain's validation, and the method does not even require an `operatorName`. This is an **Anemic Repository anti-pattern** — business logic that belongs in the aggregate is implicitly delegated to the infrastructure.
-
-**Impact**: BI-009 ("operator name is required") can be silently bypassed.
+**Impact**: Guaranteed BI-009 violation if ever called. Should be removed.
 
 ---
 
-### 🟠 V-02 — `AuditLogEntry` and `ExecutionHistoryEntry` Misplaced in `Repositories/`
+### 🟠 V-02 — `AuditLogEntry` and `ExecutionHistoryEntry` Misplaced in `Repositories/` *(STILL OPEN)*
 
 **Files**: `Repositories/AuditLogEntry.cs`, `Repositories/ExecutionHistoryEntry.cs`
 
-These are **read model projections** / **query result shapes** — not repository abstractions. Placing them in `Repositories/` violates the Single Responsibility Principle for that namespace and confuses consumers about whether they are part of the persistence contract or the domain model.
+These are **read model projections** / **query result shapes** — not repository abstractions. Unchanged since initial review.
 
 **Correct location**: `BrokerageMonitor.Domain.ReadModels/` or a dedicated `Projections/` folder.
 
 ---
 
-### 🟠 V-03 — `AlertRecord.Acknowledge()` Allows Silent Re-Acknowledgement
+### 🟠 V-03 — `AlertRecord` Acknowledgement Has Two Compounding Issues *(STILL OPEN)*
 
-**File**: `Aggregates/AlertRecord.cs`, lines 61–69
+**Files**: `Aggregates/AlertRecord.cs:61`, `Repositories/IAlertRecordRepository.cs:10`, `Infrastructure/.../AlertRecordRepository.cs:58`
 
-There is no guard preventing a second call to `Acknowledge()`. `AcknowledgedBy` and `AcknowledgedAt` are silently overwritten, which can corrupt the audit trail.
+**Issue A — Domain still has no re-acknowledgement guard** (unchanged):
 
 ```csharp
-// Current — no idempotency guard
 public void Acknowledge(string operatorName, DateTimeOffset acknowledgedAt)
 {
+    // no IsAcknowledged check — silently overwrites AcknowledgedBy
     AcknowledgedBy = operatorName;
     AcknowledgedAt = acknowledgedAt;
     IsGlobalFlagActive = false;
 }
 ```
 
+**Issue B (NEW) — `AcknowledgeAlertHandler` bypasses the aggregate entirely**:
+
+`AcknowledgeAlertHandler` calls `_alertRepository.AcknowledgeBySystemAsync()` directly. The implementation issues a raw bulk `UPDATE` to the DB with no aggregate loaded:
+
+```csharp
+// AlertRecordRepository.cs:61 — domain aggregate never touched
+UPDATE AlertRecords
+SET IsGlobalFlagActive = 0, AcknowledgedBy = @OperatorName, AcknowledgedAt = @Now
+WHERE SystemId = @SystemId AND IsGlobalFlagActive = 1;
+```
+
+This means:
+- All business logic in `AlertRecord.Acknowledge()` is completely bypassed
+- `MapToDomain` in `AlertRecordRepository` calls `alert.Acknowledge()` **during Dapper rehydration** of already-acknowledged rows — if an idempotency guard is ever added to the domain, this materialization breaks silently
+
+**Impact**: Persistent domain bypass pattern. If `Acknowledge()` ever gains richer logic (e.g., validation, event raising), it will be silently skipped in production.
+
 ---
 
-### 🟠 V-04 — `MatchesCron` Uses Bare `int.Parse` (FormatException Risk)
+### 🟠 V-04 — `MatchesCron` Uses Bare `int.Parse` (FormatException Risk) *(STILL OPEN)*
 
 **File**: `ValueObjects/HealthRuleSchedule.cs`, line 66
 
@@ -116,7 +154,7 @@ A malformed cron expression (e.g., `"*/abc 0 * * *"`) causes an unhandled `Forma
 
 | # | Issue | Recommendation |
 |---|-------|----------------|
-| S-01 | `SetMaintenanceModeAsync` bypasses domain | Remove from `IMonitoredSystemRepository`. Application layer loads aggregate → calls `ActivateMaintenance(operatorName)` → calls `UpsertAsync`. |
+| S-01 | `SetMaintenanceModeAsync` bypasses domain | **Remove** from `IMonitoredSystemRepository` and its Infrastructure implementation entirely. `ToggleMaintenanceModeHandler` already uses the correct path. |
 | S-02 | `AuditLogEntry` / `ExecutionHistoryEntry` in wrong namespace | Move to `BrokerageMonitor.Domain.ReadModels/`. |
 | S-03 | `AlertRecord` double-acknowledgement | Add `if (IsAcknowledged) throw new InvalidOperationException(...)` guard. |
 | S-04 | `int.Parse` in cron parser | Replace with `int.TryParse`; return `false` on parse failure. |
