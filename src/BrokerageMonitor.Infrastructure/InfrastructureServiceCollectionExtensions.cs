@@ -2,6 +2,7 @@ using BrokerageMonitor.Domain.Repositories;
 using BrokerageMonitor.Infrastructure.Persistence;
 using BrokerageMonitor.Infrastructure.Persistence.Repositories;
 using BrokerageMonitor.Infrastructure.ZeroMQ;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -41,9 +42,10 @@ public static class InfrastructureServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddZeroMq(
         this IServiceCollection services,
-        Microsoft.Extensions.Configuration.IConfiguration configuration)
+        IConfiguration configuration)
     {
-        services.Configure<ZeroMqOptions>(configuration.GetSection(ZeroMqOptions.SectionName));
+        services.Configure<ZeroMqOptions>(opts =>
+            configuration.GetSection(ZeroMqOptions.SectionName).Bind(opts));
 
         services.AddSingleton<IHeartbeatMessageParser, HeartbeatMessageParser>();
         services.AddSingleton<IMailChannelMessageParser, MailChannelMessageParser>();
