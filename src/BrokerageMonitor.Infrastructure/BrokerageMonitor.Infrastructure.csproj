@@ -9,6 +9,7 @@
     <PackageReference Include="Dapper" Version="2.1.72" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.6" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.6" />
+    <PackageReference Include="NetMQ" Version="4.0.1.13" />
     <PackageReference Include="Quartz.AspNetCore" Version="3.18.0" />
   </ItemGroup>
 
