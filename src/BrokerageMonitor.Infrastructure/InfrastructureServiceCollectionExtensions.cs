@@ -1,4 +1,6 @@
+using BrokerageMonitor.Application.Services;
 using BrokerageMonitor.Domain.Repositories;
+using BrokerageMonitor.Infrastructure.Monitoring;
 using BrokerageMonitor.Infrastructure.Persistence;
 using BrokerageMonitor.Infrastructure.Persistence.Repositories;
 using BrokerageMonitor.Infrastructure.ZeroMQ;
@@ -49,6 +51,13 @@ public static class InfrastructureServiceCollectionExtensions
 
         services.AddSingleton<IHeartbeatMessageParser, HeartbeatMessageParser>();
         services.AddSingleton<IMailChannelMessageParser, MailChannelMessageParser>();
+
+        // HeartbeatTimeoutMonitor is both a HostedService and an IHeartbeatTimerRegistry.
+        // Register as singleton first so both interfaces resolve to the same instance.
+        services.AddSingleton<HeartbeatTimeoutMonitor>();
+        services.AddSingleton<IHeartbeatTimerRegistry>(sp =>
+            sp.GetRequiredService<HeartbeatTimeoutMonitor>());
+        services.AddHostedService(sp => sp.GetRequiredService<HeartbeatTimeoutMonitor>());
 
         services.AddHostedService<ZeroMQSubscriberService>();
 
