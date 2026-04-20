@@ -1,7 +1,12 @@
+using BrokerageMonitor.Application.Services;
 using BrokerageMonitor.Domain.Repositories;
+using BrokerageMonitor.Infrastructure.Monitoring;
 using BrokerageMonitor.Infrastructure.Persistence;
 using BrokerageMonitor.Infrastructure.Persistence.Repositories;
+using BrokerageMonitor.Infrastructure.ZeroMQ;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace BrokerageMonitor.Infrastructure;
 
@@ -28,6 +33,33 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IExecutionHistoryRepository, ExecutionHistoryRepository>();
         services.AddScoped<IAuditLogRepository, AuditLogRepository>();
         services.AddScoped<INotificationInboxRepository, NotificationInboxRepository>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers ZeroMQ subscriber service, message parsers, and binds <see cref="ZeroMqOptions"/>
+    /// from the <c>ZeroMQ</c> configuration section.
+    /// Call after <see cref="AddPersistence"/> in the host's composition root.
+    /// </summary>
+    public static IServiceCollection AddZeroMq(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.Configure<ZeroMqOptions>(opts =>
+            configuration.GetSection(ZeroMqOptions.SectionName).Bind(opts));
+
+        services.AddSingleton<IHeartbeatMessageParser, HeartbeatMessageParser>();
+        services.AddSingleton<IMailChannelMessageParser, MailChannelMessageParser>();
+
+        // HeartbeatTimeoutMonitor is both a HostedService and an IHeartbeatTimerRegistry.
+        // Register as singleton first so both interfaces resolve to the same instance.
+        services.AddSingleton<HeartbeatTimeoutMonitor>();
+        services.AddSingleton<IHeartbeatTimerRegistry>(sp =>
+            sp.GetRequiredService<HeartbeatTimeoutMonitor>());
+        services.AddHostedService(sp => sp.GetRequiredService<HeartbeatTimeoutMonitor>());
+
+        services.AddHostedService<ZeroMQSubscriberService>();
 
         return services;
     }
