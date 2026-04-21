@@ -1,5 +1,6 @@
 using BrokerageMonitor.Application.Notifications;
 using BrokerageMonitor.Application.Services;
+using BrokerageMonitor.Application.Startup;
 using BrokerageMonitor.Application.UseCases.Alerts;
 using BrokerageMonitor.Application.UseCases.Dashboard;
 using BrokerageMonitor.Application.UseCases.History;
@@ -59,6 +60,9 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<AlertEvaluationService>();
         services.AddScoped<IAlertEvaluationService>(sp =>
             sp.GetRequiredService<AlertEvaluationService>());
+
+        // ---- Startup importer (scoped — needs scoped repo) ----
+        services.AddScoped<AppSettingsImporter>();
 
         return services;
     }
