@@ -1,0 +1,111 @@
+@implements IDisposable
+@inject IMonitorBroadcaster Broadcaster
+
+@using BrokerageMonitor.Application.Services
+@using BrokerageMonitor.Domain.ValueObjects
+
+@* NotificationToast — FR-020, US-044
+   Listens to HealthNotificationReceived events from the in-process broadcaster
+   and displays auto-dismissing Bootstrap toasts for each health notification.
+   Renders in the Layout so it is available on every page.
+*@
+
+@if (_toasts.Count > 0)
+{
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1100;">
+        @foreach (var toast in _toasts.ToList())
+        {
+            <div class="toast show border-0 shadow-sm mb-2"
+                 role="alert" aria-live="assertive" aria-atomic="true">
+                <div class="toast-header @GetHeaderClass(toast.NotificationType)">
+                    <span class="bi @GetIcon(toast.NotificationType) me-2 fs-6" aria-hidden="true"></span>
+                    <strong class="me-auto">@GetTitle(toast.NotificationType)</strong>
+                    <small class="text-muted ms-2">@toast.ReceivedAt.ToString("HH:mm:ss")</small>
+                    <button type="button" class="btn-close btn-close-white ms-2"
+                            @onclick="() => Dismiss(toast.Id)"
+                            aria-label="Close"></button>
+                </div>
+                <div class="toast-body bg-white">
+                    <span class="small">Definition: </span>
+                    <code class="small">@toast.DefinitionId.ToString("D")[..8]…</code>
+                    <a class="ms-2 btn btn-link btn-sm p-0"
+                       href="management">管理頁面</a>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private sealed record ToastEntry(
+        Guid Id,
+        Guid DefinitionId,
+        Guid ExecutionId,
+        NotificationType NotificationType,
+        DateTime ReceivedAt);
+
+    private readonly List<ToastEntry> _toasts = [];
+    private const int AutoDismissMs = 6_000;
+
+    protected override void OnInitialized()
+    {
+        Broadcaster.HealthNotificationReceived += OnHealthNotificationReceived;
+    }
+
+    public void Dispose()
+    {
+        Broadcaster.HealthNotificationReceived -= OnHealthNotificationReceived;
+    }
+
+    private void OnHealthNotificationReceived(Guid definitionId, Guid executionId, NotificationType type)
+    {
+        var toast = new ToastEntry(Guid.NewGuid(), definitionId, executionId, type, DateTime.Now);
+
+        InvokeAsync(async () =>
+        {
+            _toasts.Add(toast);
+            StateHasChanged();
+
+            await Task.Delay(AutoDismissMs);
+
+            _toasts.Remove(toast);
+            StateHasChanged();
+        });
+    }
+
+    private void Dismiss(Guid toastId)
+    {
+        var toast = _toasts.FirstOrDefault(t => t.Id == toastId);
+        if (toast is not null)
+        {
+            _toasts.Remove(toast);
+        }
+    }
+
+    private static string GetHeaderClass(NotificationType type) => type switch
+    {
+        NotificationType.HealthSuccess           => "bg-success text-white",
+        NotificationType.HealthFailure           => "bg-danger text-white",
+        NotificationType.HealthExempted          => "bg-warning text-dark",
+        NotificationType.NotificationDeliveryFailed => "bg-secondary text-white",
+        _                                        => "bg-primary text-white"
+    };
+
+    private static string GetIcon(NotificationType type) => type switch
+    {
+        NotificationType.HealthSuccess           => "bi-check-circle-fill",
+        NotificationType.HealthFailure           => "bi-x-circle-fill",
+        NotificationType.HealthExempted          => "bi-shield-exclamation",
+        NotificationType.NotificationDeliveryFailed => "bi-exclamation-triangle-fill",
+        _                                        => "bi-bell-fill"
+    };
+
+    private static string GetTitle(NotificationType type) => type switch
+    {
+        NotificationType.HealthSuccess           => "健康監控 — 成功",
+        NotificationType.HealthFailure           => "健康監控 — 失敗",
+        NotificationType.HealthExempted          => "健康監控 — 豁免",
+        NotificationType.NotificationDeliveryFailed => "通知發送失敗",
+        _                                        => "通知"
+    };
+}
