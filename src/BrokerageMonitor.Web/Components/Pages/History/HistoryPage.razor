@@ -1,0 +1,238 @@
+@page "/history"
+@rendermode InteractiveServer
+@inject GetExecutionHistoryQueryHandler HistoryHandler
+@inject GetAuditLogsQueryHandler AuditHandler
+@inject IMonitoredSystemRepository SystemRepo
+@inject ILogger<HistoryPage> Logger
+
+@using BrokerageMonitor.Application.UseCases.History
+@using BrokerageMonitor.Domain.Repositories
+@using BrokerageMonitor.Domain.ValueObjects
+@using Microsoft.Extensions.Logging
+
+<PageTitle>歷史紀錄 — Brokerage Monitor</PageTitle>
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0">
+        <span class="bi bi-clock-history me-2" aria-hidden="true"></span>
+        歷史紀錄
+    </h2>
+</div>
+
+@* ── Filter bar ────────────────────────────────────────────────────────────── *@
+<div class="card mb-4 shadow-sm">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">系統</label>
+                <select class="form-select" @bind="_filterSystemId">
+                    <option value="">全部系統</option>
+                    @foreach (var sys in _systems)
+                    {
+                        <option value="@sys">@sys</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">從</label>
+                <input type="datetime-local" class="form-control" @bind="_from" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">到</label>
+                <input type="datetime-local" class="form-control" @bind="_to" />
+            </div>
+            <div class="col-md-3">
+                <div class="btn-group w-100" role="group">
+                    <button class="btn @(_activeTab == Tab.Execution ? "btn-primary" : "btn-outline-primary")"
+                            @onclick="() => SwitchTabAsync(Tab.Execution)">
+                        執行歷史
+                    </button>
+                    <button class="btn @(_activeTab == Tab.Audit ? "btn-primary" : "btn-outline-primary")"
+                            @onclick="() => SwitchTabAsync(Tab.Audit)">
+                        稽核日誌
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">載入中…</span>
+        </div>
+    </div>
+}
+else if (_activeTab == Tab.Execution)
+{
+    @* ── Execution History ──────────────────────────────────────────────────── *@
+    @if (_executionHistory.Count == 0)
+    {
+        <div class="alert alert-info">查詢範圍內無執行紀錄。</div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>系統 ID</th>
+                        <th>元件名稱 (快照)</th>
+                        <th style="width:9rem">類型</th>
+                        <th style="width:9rem">結果狀態</th>
+                        <th style="width:12rem">開始時間</th>
+                        <th style="width:12rem">結束時間</th>
+                        <th>訊息</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var entry in _executionHistory)
+                    {
+                        <tr>
+                            <td class="small text-muted">@entry.SystemId</td>
+                            <td>@entry.ComponentName</td>
+                            <td>
+                                <span class="badge @(entry.ComponentType == ComponentType.Service ? "bg-info" : "bg-secondary")">
+                                    @entry.ComponentType
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge @GetStatusBadge(entry.ResultStatus)">
+                                    @entry.ResultStatus
+                                </span>
+                            </td>
+                            <td class="small text-muted">@FormatDt(entry.StartedAt)</td>
+                            <td class="small text-muted">@(entry.EndedAt.HasValue ? FormatDt(entry.EndedAt.Value) : "—")</td>
+                            <td class="small">@(entry.Message ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+else
+{
+    @* ── Audit Logs ─────────────────────────────────────────────────────────── *@
+    @if (_auditLogs.Count == 0)
+    {
+        <div class="alert alert-info">查詢範圍內無稽核日誌。</div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>系統 ID</th>
+                        <th>元件 ID</th>
+                        <th style="width:12rem">動作類型</th>
+                        <th style="width:10rem">操作人員</th>
+                        <th>原因</th>
+                        <th style="width:12rem">時間</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var log in _auditLogs)
+                    {
+                        <tr>
+                            <td class="small text-muted">@log.SystemId</td>
+                            <td class="small text-muted">@(log.ComponentId ?? "—")</td>
+                            <td>
+                                <span class="badge bg-dark">@log.ActionType</span>
+                            </td>
+                            <td>@log.OperatorName</td>
+                            <td class="small">@(log.Reason ?? "—")</td>
+                            <td class="small text-muted">@FormatDt(log.OccurredAt)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private enum Tab { Execution, Audit }
+
+    private Tab _activeTab = Tab.Execution;
+    private bool _loading;
+    private List<string> _systems = [];
+
+    private DateTimeOffset _from = DateTimeOffset.UtcNow.AddDays(-7);
+    private DateTimeOffset _to = DateTimeOffset.UtcNow;
+    private string? _filterSystemId;
+
+    private IReadOnlyList<ExecutionHistoryEntry> _executionHistory = [];
+    private IReadOnlyList<AuditLogEntry> _auditLogs = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSystemListAsync();
+        await LoadDataAsync();
+    }
+
+    private async Task LoadSystemListAsync()
+    {
+        try
+        {
+            var allSystems = await SystemRepo.GetAllActiveAsync();
+            _systems = allSystems.Select(s => s.SystemId).OrderBy(id => id).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load system list.");
+        }
+    }
+
+    private async Task SwitchTabAsync(Tab tab)
+    {
+        _activeTab = tab;
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        try
+        {
+            var systemId = string.IsNullOrWhiteSpace(_filterSystemId) ? null : _filterSystemId;
+
+            if (_activeTab == Tab.Execution)
+            {
+                var query = new GetExecutionHistoryQuery(systemId, _from, _to);
+                _executionHistory = await HistoryHandler.HandleAsync(query);
+            }
+            else
+            {
+                var query = new GetAuditLogsQuery(systemId, _from, _to);
+                _auditLogs = await AuditHandler.HandleAsync(query);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load history data.");
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string GetStatusBadge(ComponentStatus status) => status switch
+    {
+        ComponentStatus.Normal   => "bg-success",
+        ComponentStatus.Running  => "bg-primary",
+        ComponentStatus.Warning  => "bg-warning text-dark",
+        ComponentStatus.Error    => "bg-danger",
+        ComponentStatus.Lost     => "bg-dark",
+        ComponentStatus.Stopped  => "bg-secondary",
+        ComponentStatus.Idle     => "bg-info text-dark",
+        _                        => "bg-secondary"
+    };
+
+    private static string FormatDt(DateTimeOffset dt)
+        => dt.LocalDateTime.ToString("yyyy/MM/dd HH:mm:ss");
+}
