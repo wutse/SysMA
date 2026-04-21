@@ -26,8 +26,15 @@ public interface IMonitorBroadcaster
     /// <summary>Fired when maintenance mode is toggled for a system.</summary>
     event Action<string, bool>? MaintenanceModeChanged;
 
+    /// <summary>
+    /// Fired when a health notification is received (success / failure / exempted).
+    /// Args: (definitionId, executionId, notificationType)
+    /// </summary>
+    event Action<Guid, Guid, Domain.ValueObjects.NotificationType>? HealthNotificationReceived;
+
     void PublishComponentStatusChanged(string componentId, string systemId, ComponentStatus newStatus);
     void PublishAlertTriggered(string systemId, string componentId);
     void PublishAlertAcknowledged(string systemId);
     void PublishMaintenanceModeChanged(string systemId, bool isActive);
+    void PublishHealthNotificationReceived(Guid definitionId, Guid executionId, Domain.ValueObjects.NotificationType notificationType);
 }

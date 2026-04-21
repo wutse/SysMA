@@ -1,0 +1,97 @@
+@using BrokerageMonitor.Web.Services
+@inject OperatorSessionService Session
+
+@* OperatorSessionModal — FR-009
+   Renders a blocking Bootstrap modal that requests the operator's name.
+   The modal cannot be dismissed without providing a non-empty name.
+   Parent pages call Show() before any human-operated use-case invocation.
+*@
+
+@if (_visible)
+{
+    <div class="modal fade show d-block" tabindex="-1" role="dialog" aria-modal="true"
+         aria-labelledby="operatorModalLabel" style="background: rgba(0,0,0,.5);">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content shadow">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="operatorModalLabel">
+                        <span class="bi bi-person-badge me-2" aria-hidden="true"></span>
+                        操作人員確認
+                    </h5>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">
+                        請輸入您的姓名以繼續操作。此名稱將記錄於稽核日誌中。
+                    </p>
+                    <div class="mb-3">
+                        <label for="operatorName" class="form-label fw-semibold">姓名</label>
+                        <input id="operatorName"
+                               class="form-control @(_showValidation && string.IsNullOrWhiteSpace(_name) ? "is-invalid" : "")"
+                               type="text"
+                               placeholder="例：王大明"
+                               @bind="_name"
+                               @bind:event="oninput"
+                               @onkeydown="HandleKeyDown"
+                               autofocus />
+                        @if (_showValidation && string.IsNullOrWhiteSpace(_name))
+                        {
+                            <div class="invalid-feedback">姓名不得為空。</div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" @onclick="ConfirmAsync">
+                        <span class="bi bi-check-lg me-1" aria-hidden="true"></span>
+                        確認
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>Invoked after the operator name is confirmed.</summary>
+    [Parameter] public EventCallback OnConfirmed { get; set; }
+
+    private bool _visible;
+    private bool _showValidation;
+    private string _name = string.Empty;
+
+    /// <summary>
+    /// Shows the modal if the operator has not yet identified in this circuit session.
+    /// If already identified, invokes <see cref="OnConfirmed"/> immediately.
+    /// </summary>
+    public async Task ShowAsync()
+    {
+        if (Session.IsIdentified)
+        {
+            await OnConfirmed.InvokeAsync();
+            return;
+        }
+
+        _visible = true;
+        _showValidation = false;
+        _name = string.Empty;
+        StateHasChanged();
+    }
+
+    private async Task ConfirmAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            _showValidation = true;
+            return;
+        }
+
+        Session.Identify(_name);
+        _visible = false;
+        await OnConfirmed.InvokeAsync();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter")
+            await ConfirmAsync();
+    }
+}

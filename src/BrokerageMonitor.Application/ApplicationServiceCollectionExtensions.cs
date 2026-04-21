@@ -1,8 +1,11 @@
 using BrokerageMonitor.Application.Notifications;
 using BrokerageMonitor.Application.Services;
+using BrokerageMonitor.Application.Startup;
 using BrokerageMonitor.Application.UseCases.Alerts;
 using BrokerageMonitor.Application.UseCases.Dashboard;
+using BrokerageMonitor.Application.UseCases.History;
 using BrokerageMonitor.Application.UseCases.Maintenance;
+using BrokerageMonitor.Application.UseCases.Management;
 using BrokerageMonitor.Application.UseCases.StateOverride;
 using BrokerageMonitor.Domain.ValueObjects;
 using Microsoft.Extensions.DependencyInjection;
@@ -50,9 +53,16 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<AcknowledgeAlertHandler>();
         services.AddScoped<ToggleMaintenanceModeHandler>();
         services.AddScoped<OverrideComponentStateHandler>();
+        services.AddScoped<UpsertMonitoredSystemHandler>();
+        services.AddScoped<UpsertMonitoredComponentHandler>();
+        services.AddScoped<GetExecutionHistoryQueryHandler>();
+        services.AddScoped<GetAuditLogsQueryHandler>();
         services.AddScoped<AlertEvaluationService>();
         services.AddScoped<IAlertEvaluationService>(sp =>
             sp.GetRequiredService<AlertEvaluationService>());
+
+        // ---- Startup importer (scoped — needs scoped repo) ----
+        services.AddScoped<AppSettingsImporter>();
 
         return services;
     }

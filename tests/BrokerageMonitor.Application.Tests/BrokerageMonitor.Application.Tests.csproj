@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\BrokerageMonitor.Application\BrokerageMonitor.Application.csproj" />
     <ProjectReference Include="..\..\src\BrokerageMonitor.Domain\BrokerageMonitor.Domain.csproj" />
+    <ProjectReference Include="..\..\src\BrokerageMonitor.Web\BrokerageMonitor.Web.csproj" />
   </ItemGroup>
 
 </Project>

@@ -18,6 +18,7 @@ public sealed class MonitorBroadcaster : IMonitorBroadcaster
     public event Action<string, string>? AlertTriggered;
     public event Action<string>? AlertAcknowledged;
     public event Action<string, bool>? MaintenanceModeChanged;
+    public event Action<Guid, Guid, NotificationType>? HealthNotificationReceived;
 
     public void PublishComponentStatusChanged(string componentId, string systemId, ComponentStatus newStatus)
     {
@@ -41,5 +42,11 @@ public sealed class MonitorBroadcaster : IMonitorBroadcaster
     {
         try { MaintenanceModeChanged?.Invoke(systemId, isActive); }
         catch (Exception ex) { _logger.LogWarning(ex, "Error in MaintenanceModeChanged handler."); }
+    }
+
+    public void PublishHealthNotificationReceived(Guid definitionId, Guid executionId, NotificationType notificationType)
+    {
+        try { HealthNotificationReceived?.Invoke(definitionId, executionId, notificationType); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Error in HealthNotificationReceived handler."); }
     }
 }
