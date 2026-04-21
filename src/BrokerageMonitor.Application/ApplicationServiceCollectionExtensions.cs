@@ -4,6 +4,7 @@ using BrokerageMonitor.Application.Startup;
 using BrokerageMonitor.Domain.Events;
 using BrokerageMonitor.Application.UseCases.Alerts;
 using BrokerageMonitor.Application.UseCases.Dashboard;
+using BrokerageMonitor.Application.UseCases.History;
 using BrokerageMonitor.Application.UseCases.Maintenance;
 using BrokerageMonitor.Application.UseCases.Management;
 using BrokerageMonitor.Application.UseCases.StateOverride;
@@ -64,6 +65,8 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<AlertEvaluationService>();
         services.AddScoped<IAlertEvaluationService>(sp =>
             sp.GetRequiredService<AlertEvaluationService>());
+        services.AddScoped<GetExecutionHistoryQueryHandler>();
+        services.AddScoped<GetAuditLogsQueryHandler>();
 
         // ---- Startup utilities (scoped — depend on scoped repositories) ----
         services.AddScoped<AppSettingsImporter>();
