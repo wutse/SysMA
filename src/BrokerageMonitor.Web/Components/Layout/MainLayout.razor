@@ -1,4 +1,7 @@
 ﻿@inherits LayoutComponentBase
+@inject BrokerageMonitor.Application.Services.IMonitorBroadcaster Broadcaster
+
+@using BrokerageMonitor.Web.Components.Shared
 
 <div class="page">
     <div class="sidebar">
@@ -15,6 +18,8 @@
         </article>
     </main>
 </div>
+
+<AlertPopup Broadcaster="Broadcaster" />
 
 <div id="blazor-error-ui">
     An unhandled error has occurred.

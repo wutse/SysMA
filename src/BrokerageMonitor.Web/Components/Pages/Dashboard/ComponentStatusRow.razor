@@ -1,0 +1,121 @@
+@using BrokerageMonitor.Application.DTOs
+@using BrokerageMonitor.Domain.ValueObjects
+
+<tr>
+    <td class="align-middle text-center">
+        <span class="status-dot @GetStatusDotClass(Component.Status)"
+              title="@Component.Status"></span>
+    </td>
+    <td class="align-middle fw-semibold">@Component.Name</td>
+    <td class="align-middle">
+        <span class="badge bg-light text-dark border text-lowercase">@GetTypeLabel(Component.ComponentType)</span>
+    </td>
+    <td class="align-middle">
+        <span class="badge @GetStatusBadgeClass(Component.Status)">
+            @GetStatusLabel(Component.Status)
+        </span>
+    </td>
+    <td class="align-middle small text-muted">
+        @(Component.LastHeartbeatAt.HasValue
+            ? Component.LastHeartbeatAt.Value.LocalDateTime.ToString("MM/dd HH:mm:ss")
+            : "—")
+    </td>
+    <td class="align-middle text-end pe-2">
+        @if (Component.SubIndicators.Count > 0)
+        {
+            <button class="btn btn-sm btn-outline-secondary py-0 px-1"
+                    @onclick="ToggleSubIndicators"
+                    title="子指標">
+                <span class="bi @(_showSubIndicators ? "bi-chevron-up" : "bi-chevron-down")"
+                      aria-hidden="true"></span>
+            </button>
+        }
+    </td>
+</tr>
+
+@if (_showSubIndicators && Component.SubIndicators.Count > 0)
+{
+    <tr class="table-light">
+        <td colspan="6" class="pb-2 pt-1 ps-4">
+            <div class="sub-indicators d-flex flex-wrap gap-2">
+                @foreach (var sub in Component.SubIndicators)
+                {
+                    <span class="badge @GetSubIndicatorBadgeClass(sub.Status) border">
+                        @sub.Name:
+                        @if (sub.Metric is not null)
+                        {
+                            <span class="ms-1">@sub.Metric.Value.ToString("F1") @sub.Metric.Label</span>
+                        }
+                        else
+                        {
+                            <span class="ms-1">@sub.Status</span>
+                        }
+                    </span>
+                }
+            </div>
+        </td>
+    </tr>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public ComponentStatusDto Component { get; set; } = default!;
+
+    private bool _showSubIndicators;
+
+    private void ToggleSubIndicators() => _showSubIndicators = !_showSubIndicators;
+
+    private static string GetStatusDotClass(ComponentStatus s) => s switch
+    {
+        ComponentStatus.Lost        => "status-dot--lost",
+        ComponentStatus.Error       => "status-dot--error",
+        ComponentStatus.Warning     => "status-dot--warning",
+        ComponentStatus.Unknown     => "status-dot--unknown",
+        ComponentStatus.Stopped     => "status-dot--stopped",
+        ComponentStatus.Idle        => "status-dot--idle",
+        ComponentStatus.Running     => "status-dot--running",
+        ComponentStatus.Normal      => "status-dot--normal",
+        ComponentStatus.Maintenance => "status-dot--maintenance",
+        _                           => "status-dot--unknown"
+    };
+
+    private static string GetStatusBadgeClass(ComponentStatus s) => s switch
+    {
+        ComponentStatus.Lost        => "bg-danger",
+        ComponentStatus.Error       => "bg-danger",
+        ComponentStatus.Warning     => "bg-warning text-dark",
+        ComponentStatus.Unknown     => "bg-secondary",
+        ComponentStatus.Stopped     => "bg-dark",
+        ComponentStatus.Idle        => "bg-light text-dark border",
+        ComponentStatus.Running     => "bg-success",
+        ComponentStatus.Normal      => "bg-success",
+        ComponentStatus.Maintenance => "bg-warning text-dark",
+        _                           => "bg-secondary"
+    };
+
+    private static string GetStatusLabel(ComponentStatus s) => s switch
+    {
+        ComponentStatus.Lost        => "失聯",
+        ComponentStatus.Error       => "錯誤",
+        ComponentStatus.Warning     => "警告",
+        ComponentStatus.Unknown     => "未知",
+        ComponentStatus.Stopped     => "已停止",
+        ComponentStatus.Idle        => "閒置",
+        ComponentStatus.Running     => "運行中",
+        ComponentStatus.Normal      => "正常",
+        ComponentStatus.Maintenance => "維護中",
+        _                           => s.ToString()
+    };
+
+    private static string GetTypeLabel(ComponentType t) => t switch
+    {
+        ComponentType.Service      => "Service",
+        ComponentType.ScheduledJob => "Scheduled Job",
+        _                          => t.ToString()
+    };
+
+    private static string GetSubIndicatorBadgeClass(SubIndicatorStatus status) =>
+        status == SubIndicatorStatus.Error
+            ? "bg-danger"
+            : "bg-light text-dark";
+}

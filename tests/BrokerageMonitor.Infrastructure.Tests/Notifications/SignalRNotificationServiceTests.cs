@@ -1,3 +1,4 @@
+using BrokerageMonitor.Application.Services;
 using BrokerageMonitor.Domain.Events;
 using BrokerageMonitor.Domain.ValueObjects;
 using BrokerageMonitor.Infrastructure.Notifications;
@@ -48,6 +49,18 @@ internal sealed class SpyHubContext : IHubContext<MonitorHub>
 // Tests
 // ---------------------------------------------------------------------------
 
+internal sealed class NullBroadcaster : IMonitorBroadcaster
+{
+    public event Action<string, string, ComponentStatus>? ComponentStatusUpdated;
+    public event Action<string, string>? AlertTriggered;
+    public event Action<string>? AlertAcknowledged;
+    public event Action<string, bool>? MaintenanceModeChanged;
+    public void PublishComponentStatusChanged(string c, string s, ComponentStatus n) { }
+    public void PublishAlertTriggered(string s, string c) { }
+    public void PublishAlertAcknowledged(string s) { }
+    public void PublishMaintenanceModeChanged(string s, bool a) { }
+}
+
 [TestClass]
 public sealed class SignalRNotificationServiceTests
 {
@@ -58,6 +71,7 @@ public sealed class SignalRNotificationServiceTests
     {
         _sut = new SignalRNotificationService(
             _hubContext,
+            new NullBroadcaster(),
             NullLogger<SignalRNotificationService>.Instance);
     }
 
@@ -174,6 +188,7 @@ public sealed class SignalRNotificationServiceTests
     {
         var sut = new SignalRNotificationService(
             new ThrowingHubContext(),
+            new NullBroadcaster(),
             NullLogger<SignalRNotificationService>.Instance);
 
         await sut.NotifyAlertTriggeredAsync("sys-1", "comp-1");  // no throw expected

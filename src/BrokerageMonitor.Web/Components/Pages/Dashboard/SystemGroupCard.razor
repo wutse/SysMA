@@ -1,0 +1,125 @@
+@using BrokerageMonitor.Application.DTOs
+@using BrokerageMonitor.Domain.ValueObjects
+
+<div class="card @GetCardBorderClass() mb-2">
+    <div class="card-header d-flex align-items-center justify-content-between py-2">
+        <div class="d-flex align-items-center gap-2">
+            <span class="status-dot @GetStatusDotClass(System.RolledUpStatus)"
+                  title="@System.RolledUpStatus"></span>
+            <strong class="fs-6">@System.Name</strong>
+            <span class="badge @GetStatusBadgeClass(System.RolledUpStatus) ms-1">
+                @GetStatusLabel(System.RolledUpStatus)
+            </span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            @if (System.IsMaintenanceActive)
+            {
+                <span class="badge bg-warning text-dark">
+                    <span class="bi bi-wrench-adjustable me-1" aria-hidden="true"></span>
+                    維護模式
+                </span>
+            }
+            @if (System.HasUnacknowledgedAlert)
+            {
+                <span class="badge bg-danger pulse-badge">
+                    <span class="bi bi-bell-fill me-1" aria-hidden="true"></span>
+                    未確認告警
+                </span>
+            }
+        </div>
+    </div>
+
+    <div class="card-body p-0">
+        @if (System.Components.Count == 0)
+        {
+            <p class="text-muted small px-3 py-2 mb-0">此系統尚無已啟用的元件。</p>
+        }
+        else
+        {
+            <table class="table table-sm table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:2.5rem"></th>
+                        <th>元件名稱</th>
+                        <th style="width:8rem">類型</th>
+                        <th style="width:8rem">狀態</th>
+                        <th style="width:11rem">最後心跳</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var component in System.Components)
+                    {
+                        <ComponentStatusRow Component="component" />
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public SystemSummaryDto System { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<(string SystemId, string OperatorName)> OnAcknowledgeAlert { get; set; }
+
+    [Parameter]
+    public EventCallback<(string SystemId, bool Activate, string OperatorName)> OnToggleMaintenance { get; set; }
+
+    private static string GetCardBorderClass(ComponentStatus status) => status switch
+    {
+        ComponentStatus.Lost    => "border-danger",
+        ComponentStatus.Error   => "border-danger",
+        ComponentStatus.Warning => "border-warning",
+        ComponentStatus.Unknown => "border-secondary",
+        ComponentStatus.Running => "border-success",
+        ComponentStatus.Normal  => "border-success",
+        _                       => "border-light"
+    };
+
+    private string GetCardBorderClass() => GetCardBorderClass(System.RolledUpStatus);
+
+    private static string GetStatusDotClass(ComponentStatus status) => status switch
+    {
+        ComponentStatus.Lost        => "status-dot--lost",
+        ComponentStatus.Error       => "status-dot--error",
+        ComponentStatus.Warning     => "status-dot--warning",
+        ComponentStatus.Unknown     => "status-dot--unknown",
+        ComponentStatus.Stopped     => "status-dot--stopped",
+        ComponentStatus.Idle        => "status-dot--idle",
+        ComponentStatus.Running     => "status-dot--running",
+        ComponentStatus.Normal      => "status-dot--normal",
+        ComponentStatus.Maintenance => "status-dot--maintenance",
+        _                           => "status-dot--unknown"
+    };
+
+    private static string GetStatusBadgeClass(ComponentStatus status) => status switch
+    {
+        ComponentStatus.Lost        => "bg-danger",
+        ComponentStatus.Error       => "bg-danger",
+        ComponentStatus.Warning     => "bg-warning text-dark",
+        ComponentStatus.Unknown     => "bg-secondary",
+        ComponentStatus.Stopped     => "bg-dark",
+        ComponentStatus.Idle        => "bg-light text-dark border",
+        ComponentStatus.Running     => "bg-success",
+        ComponentStatus.Normal      => "bg-success",
+        ComponentStatus.Maintenance => "bg-warning text-dark",
+        _                           => "bg-secondary"
+    };
+
+    private static string GetStatusLabel(ComponentStatus status) => status switch
+    {
+        ComponentStatus.Lost        => "失聯",
+        ComponentStatus.Error       => "錯誤",
+        ComponentStatus.Warning     => "警告",
+        ComponentStatus.Unknown     => "未知",
+        ComponentStatus.Stopped     => "已停止",
+        ComponentStatus.Idle        => "閒置",
+        ComponentStatus.Running     => "運行中",
+        ComponentStatus.Normal      => "正常",
+        ComponentStatus.Maintenance => "維護中",
+        _                           => status.ToString()
+    };
+}
