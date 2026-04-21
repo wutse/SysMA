@@ -1,4 +1,5 @@
 using BrokerageMonitor.Application;
+using BrokerageMonitor.Application.Startup;
 using BrokerageMonitor.Infrastructure;
 using BrokerageMonitor.Infrastructure.Notifications;
 using BrokerageMonitor.Infrastructure.Persistence;
@@ -30,6 +31,11 @@ try
 
     // Register Application-layer services (handlers, state cache, broadcaster)
     builder.Services.AddApplicationServices();
+
+    // Bind Systems[] from appsettings.json for AppSettingsImporter (FR-031 / US-045)
+    var systemConfigs = builder.Configuration.GetSection("Systems").Get<List<SystemConfig>>() ?? [];
+    foreach (var sc in systemConfigs)
+        builder.Services.AddSingleton(sc);
 
     // Register SignalR and the realtime notification service
     builder.Services.AddSignalR();
@@ -74,6 +80,14 @@ try
     await app.Services
         .GetRequiredService<DatabaseInitializer>()
         .InitialiseAsync();
+
+    // Seed initial systems from appsettings.json if DB is empty (US-045)
+    using (var scope = app.Services.CreateScope())
+    {
+        await scope.ServiceProvider
+            .GetRequiredService<AppSettingsImporter>()
+            .ImportIfEmptyAsync();
+    }
 
     app.Run();
 }
