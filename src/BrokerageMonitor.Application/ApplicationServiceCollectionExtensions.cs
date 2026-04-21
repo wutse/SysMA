@@ -7,8 +7,10 @@ using BrokerageMonitor.Application.UseCases.History;
 using BrokerageMonitor.Application.UseCases.Maintenance;
 using BrokerageMonitor.Application.UseCases.Management;
 using BrokerageMonitor.Application.UseCases.StateOverride;
+using BrokerageMonitor.Domain.Events;
 using BrokerageMonitor.Domain.ValueObjects;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
 namespace BrokerageMonitor.Application;
@@ -39,8 +41,8 @@ public static class ApplicationServiceCollectionExtensions
         // ---- Domain event dispatcher (scoped) ----
         services.AddScoped<IDomainEventDispatcher, DomainEventDispatcher>();
 
-        // ---- Heartbeat processor (singleton — holds timer state) ----
-        services.AddSingleton<IHeartbeatProcessor, HeartbeatProcessor>();
+        // ---- Heartbeat processor (scoped — consumes scoped repositories) ----
+        services.AddScoped<IHeartbeatProcessor, HeartbeatProcessor>();
 
         // ---- Audit logger stub (no-op until persistence layer is wired) ----
         services.AddSingleton<IAuditLogger, NullAuditLogger>();
@@ -63,6 +65,12 @@ public static class ApplicationServiceCollectionExtensions
 
         // ---- Startup importer (scoped — needs scoped repo) ----
         services.AddScoped<AppSettingsImporter>();
+
+        // ---- Null stubs for services pending a concrete implementation ----
+        // TryAdd ensures the real implementation registered by AddZeroMq() / future
+        // feature branches takes precedence over these no-op fallbacks.
+        services.TryAddSingleton<IAggregateHealthEvaluationService, NullAggregateHealthEvaluationService>();
+        services.TryAddSingleton<IHeartbeatTimerRegistry, NullHeartbeatTimerRegistry>();
 
         return services;
     }
@@ -99,4 +107,25 @@ internal sealed class NullEmailNotificationService : IEmailNotificationService
         HealthSummaryEmailRequest request,
         CancellationToken ct = default)
         => Task.CompletedTask;
+}
+
+/// <summary>
+/// No-op stub for <see cref="IAggregateHealthEvaluationService"/>.
+/// Replaced by the real implementation when US-049/US-050 (EP-009) is delivered.
+/// </summary>
+internal sealed class NullAggregateHealthEvaluationService : IAggregateHealthEvaluationService
+{
+    public Task UpdateComponentProgressAsync(ComponentStatusChanged evt, CancellationToken ct = default)
+        => Task.CompletedTask;
+}
+
+/// <summary>
+/// No-op stub for <see cref="IHeartbeatTimerRegistry"/>.
+/// Replaced by <c>HeartbeatTimeoutMonitor</c> (Infrastructure) when AddZeroMq() is registered.
+/// </summary>
+internal sealed class NullHeartbeatTimerRegistry : IHeartbeatTimerRegistry
+{
+    public void RegisterComponent(string componentId, string systemId, ComponentType componentType, int timeoutSeconds) { }
+    public void ResetTimer(string componentId) { }
+    public void UnregisterComponent(string componentId) { }
 }
