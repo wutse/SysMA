@@ -1,0 +1,132 @@
+@page "/dashboard"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject GetDashboardQueryHandler DashboardHandler
+@inject IMonitorBroadcaster Broadcaster
+@inject IMonitoredSystemRepository SystemRepository
+
+@using BrokerageMonitor.Application.DTOs
+@using BrokerageMonitor.Application.Services
+@using BrokerageMonitor.Application.UseCases.Dashboard
+@using BrokerageMonitor.Domain.Repositories
+@using BrokerageMonitor.Domain.ValueObjects
+@using BrokerageMonitor.Web.Components.Pages.Dashboard
+
+<PageTitle>Dashboard — Brokerage Monitor</PageTitle>
+
+<div class="dashboard-header d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0">
+        <span class="bi bi-display me-2" aria-hidden="true"></span>
+        監控儀表板
+    </h2>
+    <div class="d-flex align-items-center gap-2">
+        <span class="badge bg-secondary">最後更新: @_lastUpdated.ToString("HH:mm:ss")</span>
+        <button class="btn btn-sm btn-outline-secondary" @onclick="RefreshAsync" disabled="@_loading">
+            <span class="bi bi-arrow-clockwise me-1" aria-hidden="true"></span>
+            重新整理
+        </button>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center align-items-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">載入中…</span>
+        </div>
+    </div>
+}
+else if (_systems.Count == 0)
+{
+    <div class="alert alert-info">
+        <span class="bi bi-info-circle me-2" aria-hidden="true"></span>
+        尚無已啟用的監控系統。請前往系統管理頁面新增系統。
+    </div>
+}
+else
+{
+    <div class="row gy-3">
+        @foreach (var system in _systems)
+        {
+            <div class="col-12">
+                <SystemGroupCard
+                    System="system"
+                    OnAcknowledgeAlert="HandleAcknowledgeAlertAsync"
+                    OnToggleMaintenance="HandleToggleMaintenanceAsync" />
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private IReadOnlyList<SystemSummaryDto> _systems = [];
+    private bool _loading = true;
+    private DateTimeOffset _lastUpdated;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Broadcaster.ComponentStatusUpdated += OnComponentStatusUpdated;
+        Broadcaster.AlertAcknowledged       += OnAlertAcknowledged;
+        Broadcaster.MaintenanceModeChanged  += OnMaintenanceModeChanged;
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        _loading = true;
+        StateHasChanged();
+        _systems = await DashboardHandler.HandleAsync(new GetDashboardQuery());
+        _lastUpdated = DateTimeOffset.Now;
+        _loading = false;
+    }
+
+    // ---- Real-time broadcaster callbacks ----
+
+    private void OnComponentStatusUpdated(string componentId, string systemId, ComponentStatus newStatus)
+    {
+        // Rebuild the affected system summary from the updated in-memory state
+        _ = InvokeAsync(async () =>
+        {
+            var updated = await DashboardHandler.HandleAsync(new GetDashboardQuery());
+            _systems = updated;
+            _lastUpdated = DateTimeOffset.Now;
+            StateHasChanged();
+        });
+    }
+
+    private void OnAlertAcknowledged(string systemId)
+        => InvokeAsync(async () =>
+        {
+            _systems = await DashboardHandler.HandleAsync(new GetDashboardQuery());
+            _lastUpdated = DateTimeOffset.Now;
+            StateHasChanged();
+        });
+
+    private void OnMaintenanceModeChanged(string systemId, bool isActive)
+        => InvokeAsync(async () =>
+        {
+            _systems = await DashboardHandler.HandleAsync(new GetDashboardQuery());
+            _lastUpdated = DateTimeOffset.Now;
+            StateHasChanged();
+        });
+
+    // ---- Callback handlers passed to child components ----
+
+    private async Task HandleAcknowledgeAlertAsync((string SystemId, string OperatorName) args)
+    {
+        // No-op here; the actual hub invoke is done by AlertPopup / AlertCenter
+        await Task.CompletedTask;
+    }
+
+    private async Task HandleToggleMaintenanceAsync((string SystemId, bool Activate, string OperatorName) args)
+    {
+        await Task.CompletedTask;
+    }
+
+    public void Dispose()
+    {
+        Broadcaster.ComponentStatusUpdated -= OnComponentStatusUpdated;
+        Broadcaster.AlertAcknowledged       -= OnAlertAcknowledged;
+        Broadcaster.MaintenanceModeChanged  -= OnMaintenanceModeChanged;
+    }
+}

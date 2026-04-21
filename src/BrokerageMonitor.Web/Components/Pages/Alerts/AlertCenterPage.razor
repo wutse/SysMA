@@ -1,0 +1,197 @@
+@page "/alerts"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IAlertRecordRepository AlertRepo
+@inject AcknowledgeAlertHandler AcknowledgeHandler
+@inject IMonitorBroadcaster Broadcaster
+@inject ILogger<AlertCenterPage> Logger
+
+@using BrokerageMonitor.Application.Services
+@using BrokerageMonitor.Application.UseCases.Alerts
+@using BrokerageMonitor.Domain.Aggregates
+@using BrokerageMonitor.Domain.Repositories
+@using BrokerageMonitor.Domain.ValueObjects
+@using Microsoft.Extensions.Logging
+
+<PageTitle>告警中心 — Brokerage Monitor</PageTitle>
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0">
+        <span class="bi bi-bell-fill me-2" aria-hidden="true"></span>
+        告警中心
+    </h2>
+    <div class="d-flex gap-2 align-items-center">
+        <div class="input-group input-group-sm" style="max-width: 220px;">
+            <span class="input-group-text">從</span>
+            <input type="date" class="form-control" @bind="_from" />
+        </div>
+        <div class="input-group input-group-sm" style="max-width: 220px;">
+            <span class="input-group-text">到</span>
+            <input type="date" class="form-control" @bind="_to" />
+        </div>
+        <button class="btn btn-sm btn-outline-primary" @onclick="LoadHistoryAsync">歷史查詢</button>
+        <button class="btn btn-sm btn-outline-secondary" @onclick="LoadUnacknowledgedAsync">重新整理</button>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">載入中…</span>
+        </div>
+    </div>
+}
+else if (_alerts.Count == 0)
+{
+    <div class="alert alert-success">
+        <span class="bi bi-check-circle me-2" aria-hidden="true"></span>
+        目前沒有未確認的告警。
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>系統 ID</th>
+                    <th>元件 ID</th>
+                    <th style="width:8rem">狀態</th>
+                    <th style="width:11rem">發生時間</th>
+                    <th style="width:8rem">已確認</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var alert in _alerts)
+                {
+                    <tr>
+                        <td>@alert.SystemId</td>
+                        <td>@alert.ComponentId</td>
+                        <td>
+                            <span class="badge @GetStatusBadge(alert.AlertStatus)">
+                                @alert.AlertStatus
+                            </span>
+                        </td>
+                        <td class="small text-muted">@alert.OccurredAt.LocalDateTime.ToString("MM/dd HH:mm:ss")</td>
+                        <td>
+                            @if (alert.IsGlobalFlagActive)
+                            {
+                                <span class="badge bg-danger">未確認</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary">已確認</span>
+                            }
+                        </td>
+                        <td class="text-end">
+                            @if (alert.IsGlobalFlagActive)
+                            {
+                                <button class="btn btn-sm btn-outline-danger"
+                                        @onclick="() => AcknowledgeAsync(alert.SystemId)"
+                                        disabled="@(_acknowledging.Contains(alert.SystemId))">
+                                    確認告警
+                                </button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private IReadOnlyList<AlertRecord> _alerts = [];
+    private readonly HashSet<string> _acknowledging = new(StringComparer.Ordinal);
+    private bool _loading = true;
+    private DateTime _from = DateTime.Today.AddDays(-7);
+    private DateTime _to   = DateTime.Today.AddDays(1);
+    private bool _historyMode;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Broadcaster.AlertAcknowledged += OnAlertAcknowledged;
+        Broadcaster.AlertTriggered    += OnAlertTriggered;
+        await LoadUnacknowledgedAsync();
+    }
+
+    private async Task LoadUnacknowledgedAsync()
+    {
+        _historyMode = false;
+        _loading = true;
+        StateHasChanged();
+        _alerts = await AlertRepo.GetUnacknowledgedAsync();
+        _loading = false;
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        _historyMode = true;
+        _loading = true;
+        StateHasChanged();
+        _alerts = await AlertRepo.GetHistoryAsync(
+            null,
+            new DateTimeOffset(_from, TimeSpan.Zero),
+            new DateTimeOffset(_to, TimeSpan.Zero));
+        _loading = false;
+    }
+
+    private async Task AcknowledgeAsync(string systemId)
+    {
+        _acknowledging.Add(systemId);
+        StateHasChanged();
+        try
+        {
+            await AcknowledgeHandler.HandleAsync(
+                new AcknowledgeAlertCommand(systemId, "Operator"));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to acknowledge alert for {SystemId}", systemId);
+        }
+        finally
+        {
+            _acknowledging.Remove(systemId);
+        }
+    }
+
+    // ---- Broadcaster callbacks ----
+
+    private void OnAlertAcknowledged(string systemId)
+        => _ = InvokeAsync(async () =>
+        {
+            if (!_historyMode)
+                _alerts = await AlertRepo.GetUnacknowledgedAsync();
+            else
+            {
+                // Refresh the acknowledged status in the current list
+                var updated = _alerts.Where(a => a.SystemId != systemId).ToList();
+                _alerts = updated;
+            }
+            StateHasChanged();
+        });
+
+    private void OnAlertTriggered(string systemId, string componentId)
+        => _ = InvokeAsync(async () =>
+        {
+            if (!_historyMode)
+                _alerts = await AlertRepo.GetUnacknowledgedAsync();
+            StateHasChanged();
+        });
+
+    private static string GetStatusBadge(ComponentStatus status) => status switch
+    {
+        ComponentStatus.Lost    => "bg-danger",
+        ComponentStatus.Error   => "bg-danger",
+        ComponentStatus.Warning => "bg-warning text-dark",
+        _                       => "bg-secondary"
+    };
+
+    public void Dispose()
+    {
+        Broadcaster.AlertAcknowledged -= OnAlertAcknowledged;
+        Broadcaster.AlertTriggered    -= OnAlertTriggered;
+    }
+}

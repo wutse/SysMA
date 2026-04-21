@@ -1,6 +1,8 @@
+using BrokerageMonitor.Application.Notifications;
 using BrokerageMonitor.Application.Services;
 using BrokerageMonitor.Domain.Repositories;
 using BrokerageMonitor.Infrastructure.Monitoring;
+using BrokerageMonitor.Infrastructure.Notifications;
 using BrokerageMonitor.Infrastructure.Persistence;
 using BrokerageMonitor.Infrastructure.Persistence.Repositories;
 using BrokerageMonitor.Infrastructure.ZeroMQ;
@@ -61,6 +63,19 @@ public static class InfrastructureServiceCollectionExtensions
 
         services.AddHostedService<ZeroMQSubscriberService>();
 
+        return services;
+    }
+
+    /// <summary>
+    /// Registers <see cref="SignalRNotificationService"/> as the singleton
+    /// <see cref="IRealtimeNotificationService"/> implementation, and
+    /// <see cref="MonitorBroadcaster"/> as the singleton <see cref="IMonitorBroadcaster"/>
+    /// for Blazor Server in-process event broadcasting.
+    /// Requires that <c>services.AddSignalR()</c> has been called by the host.
+    /// </summary>
+    public static IServiceCollection AddRealtimeNotifications(this IServiceCollection services)
+    {
+        services.AddSingleton<IRealtimeNotificationService, SignalRNotificationService>();
         return services;
     }
 }
