@@ -1,3 +1,4 @@
+using BrokerageMonitor.Application;
 using BrokerageMonitor.Infrastructure;
 using BrokerageMonitor.Infrastructure.Notifications;
 using BrokerageMonitor.Infrastructure.Persistence;
@@ -25,6 +26,9 @@ try
 
     // Register SQLite persistence (DbConnectionFactory + DatabaseInitializer)
     builder.Services.AddPersistence();
+
+    // Register Application-layer services (handlers, state cache, broadcaster)
+    builder.Services.AddApplicationServices();
 
     // Register SignalR and the realtime notification service
     builder.Services.AddSignalR();

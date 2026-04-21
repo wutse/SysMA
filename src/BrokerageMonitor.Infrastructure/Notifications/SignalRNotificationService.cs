@@ -1,4 +1,5 @@
 using BrokerageMonitor.Application.Notifications;
+using BrokerageMonitor.Application.Services;
 using BrokerageMonitor.Domain.Events;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
@@ -14,13 +15,16 @@ namespace BrokerageMonitor.Infrastructure.Notifications;
 public sealed class SignalRNotificationService : IRealtimeNotificationService
 {
     private readonly IHubContext<MonitorHub> _hubContext;
+    private readonly IMonitorBroadcaster _broadcaster;
     private readonly ILogger<SignalRNotificationService> _logger;
 
     public SignalRNotificationService(
         IHubContext<MonitorHub> hubContext,
+        IMonitorBroadcaster broadcaster,
         ILogger<SignalRNotificationService> logger)
     {
         _hubContext = hubContext;
+        _broadcaster = broadcaster;
         _logger = logger;
     }
 
@@ -43,6 +47,8 @@ public sealed class SignalRNotificationService : IRealtimeNotificationService
                     evt.OccurredAt
                 },
                 ct);
+
+            _broadcaster.PublishComponentStatusChanged(evt.ComponentId, evt.SystemId, evt.NewStatus);
         }
         catch (Exception ex)
         {
@@ -64,6 +70,8 @@ public sealed class SignalRNotificationService : IRealtimeNotificationService
                 "OnAlertTriggered",
                 new { SystemId = systemId, ComponentId = componentId },
                 ct);
+
+            _broadcaster.PublishAlertTriggered(systemId, componentId);
         }
         catch (Exception ex)
         {
@@ -83,6 +91,8 @@ public sealed class SignalRNotificationService : IRealtimeNotificationService
                 "OnAlertAcknowledged",
                 new { SystemId = systemId },
                 ct);
+
+            _broadcaster.PublishAlertAcknowledged(systemId);
         }
         catch (Exception ex)
         {
@@ -103,6 +113,8 @@ public sealed class SignalRNotificationService : IRealtimeNotificationService
                 "OnMaintenanceModeChanged",
                 new { SystemId = systemId, IsActive = isActive },
                 ct);
+
+            _broadcaster.PublishMaintenanceModeChanged(systemId, isActive);
         }
         catch (Exception ex)
         {
