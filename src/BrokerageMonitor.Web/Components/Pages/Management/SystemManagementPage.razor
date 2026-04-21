@@ -1,0 +1,549 @@
+@page "/management"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IMonitoredSystemRepository SystemRepo
+@inject IMonitoredComponentRepository ComponentRepo
+@inject UpsertMonitoredSystemHandler UpsertSystemHandler
+@inject UpsertMonitoredComponentHandler UpsertComponentHandler
+@inject ToggleMaintenanceModeHandler MaintenanceHandler
+@inject OperatorSessionService Session
+@inject ILogger<SystemManagementPage> Logger
+
+@using BrokerageMonitor.Application.UseCases.Management
+@using BrokerageMonitor.Application.UseCases.Maintenance
+@using BrokerageMonitor.Domain.Aggregates
+@using BrokerageMonitor.Domain.Repositories
+@using BrokerageMonitor.Domain.ValueObjects
+@using BrokerageMonitor.Web.Services
+@using Microsoft.Extensions.Logging
+
+<PageTitle>系統管理 — Brokerage Monitor</PageTitle>
+
+<OperatorSessionModal @ref="_operatorModal" OnConfirmed="ExecutePendingAction" />
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0">
+        <span class="bi bi-gear-fill me-2" aria-hidden="true"></span>
+        系統管理
+    </h2>
+    <button class="btn btn-success btn-sm" @onclick="OpenAddSystemAsync">
+        <span class="bi bi-plus-lg me-1" aria-hidden="true"></span>
+        新增系統
+    </button>
+</div>
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">載入中…</span>
+        </div>
+    </div>
+}
+else if (_systems.Count == 0)
+{
+    <div class="alert alert-info">
+        <span class="bi bi-info-circle me-2" aria-hidden="true"></span>
+        尚無任何監控系統。請點選「新增系統」建立第一個系統。
+    </div>
+}
+else
+{
+    @foreach (var system in _systems)
+    {
+        <div class="card mb-4 shadow-sm">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <div>
+                    <span class="fw-bold">@system.Name</span>
+                    <span class="text-muted small ms-2">(@system.SystemId)</span>
+                    @if (!system.IsActive)
+                    {
+                        <span class="badge bg-secondary ms-2">停用</span>
+                    }
+                    @if (system.IsMaintenanceActive)
+                    {
+                        <span class="badge bg-warning text-dark ms-2">
+                            <span class="bi bi-tools me-1" aria-hidden="true"></span>
+                            維護中
+                        </span>
+                    }
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenEditSystemAsync(system)">
+                        <span class="bi bi-pencil me-1" aria-hidden="true"></span>
+                        編輯
+                    </button>
+                    <button class="btn btn-sm @(system.IsMaintenanceActive ? "btn-warning" : "btn-outline-warning")"
+                            @onclick="() => ToggleMaintenanceAsync(system)">
+                        <span class="bi bi-tools me-1" aria-hidden="true"></span>
+                        @(system.IsMaintenanceActive ? "結束維護" : "啟用維護")
+                    </button>
+                    <button class="btn btn-sm btn-outline-success" @onclick="() => OpenAddComponentAsync(system.SystemId)">
+                        <span class="bi bi-plus-lg me-1" aria-hidden="true"></span>
+                        新增元件
+                    </button>
+                </div>
+            </div>
+
+            <div class="card-body p-0">
+                @{
+                    var components = _componentsBySystem.GetValueOrDefault(system.SystemId, []);
+                }
+                @if (components.Count == 0)
+                {
+                    <div class="text-muted small p-3">此系統尚無元件。</div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>元件 ID</th>
+                                    <th>名稱</th>
+                                    <th>類型</th>
+                                    <th>Topic</th>
+                                    <th style="width:7rem">超時 (秒)</th>
+                                    <th style="width:5rem">狀態</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var comp in components)
+                                {
+                                    <tr>
+                                        <td class="small text-muted">@comp.ComponentId</td>
+                                        <td>@comp.Name</td>
+                                        <td>
+                                            <span class="badge @(comp.ComponentType == ComponentType.Service ? "bg-info" : "bg-purple text-light")">
+                                                @comp.ComponentType
+                                            </span>
+                                        </td>
+                                        <td class="small">@comp.ZeroMQTopic</td>
+                                        <td>@comp.HeartbeatTimeoutSeconds</td>
+                                        <td>
+                                            @if (comp.IsActive)
+                                            {
+                                                <span class="badge bg-success">啟用</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge bg-secondary">停用</span>
+                                            }
+                                        </td>
+                                        <td class="text-end">
+                                            <button class="btn btn-sm btn-outline-primary"
+                                                    @onclick="() => OpenEditComponentAsync(comp)">
+                                                <span class="bi bi-pencil" aria-hidden="true"></span>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+}
+
+@* ── System Edit Modal ─────────────────────────────────────────────────────── *@
+@if (_showSystemModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" role="dialog" aria-modal="true"
+         aria-labelledby="sysModalLabel" style="background: rgba(0,0,0,.5);">
+        <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="sysModalLabel">
+                        @(_editingSystem is null ? "新增系統" : $"編輯系統 — {_editingSystem.SystemId}")
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseSystemModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">系統 ID</label>
+                        <input class="form-control" @bind="_sysForm.SystemId"
+                               disabled="@(_editingSystem is not null)" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">名稱</label>
+                        <input class="form-control" @bind="_sysForm.Name" />
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col">
+                            <label class="form-label">盤中開始時間</label>
+                            <input type="time" class="form-control" @bind="_sysForm.MarketStart" />
+                        </div>
+                        <div class="col">
+                            <label class="form-label">盤中結束時間</label>
+                            <input type="time" class="form-control" @bind="_sysForm.MarketEnd" />
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">告警收件人 (每行一個)</label>
+                        <textarea class="form-control" rows="3" @bind="_sysForm.RecipientsText"></textarea>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="sysActive"
+                               @bind="_sysForm.IsActive" />
+                        <label class="form-check-label" for="sysActive">啟用系統</label>
+                    </div>
+
+                    @if (_formError is not null)
+                    {
+                        <div class="alert alert-danger py-2">@_formError</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseSystemModal">取消</button>
+                    <button class="btn btn-primary" @onclick="SaveSystemAsync" disabled="@_saving">
+                        @if (_saving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                        }
+                        儲存
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Component Edit Modal ──────────────────────────────────────────────────── *@
+@if (_showComponentModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" role="dialog" aria-modal="true"
+         aria-labelledby="compModalLabel" style="background: rgba(0,0,0,.5);">
+        <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="compModalLabel">
+                        @(_editingComponent is null ? "新增元件" : $"編輯元件 — {_editingComponent.ComponentId}")
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseComponentModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">元件 ID</label>
+                        <input class="form-control" @bind="_compForm.ComponentId"
+                               disabled="@(_editingComponent is not null)" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">名稱</label>
+                        <input class="form-control" @bind="_compForm.Name" />
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col">
+                            <label class="form-label">類型</label>
+                            <select class="form-select" @bind="_compForm.ComponentType">
+                                <option value="@ComponentType.Service">Service</option>
+                                <option value="@ComponentType.ScheduledJob">ScheduledJob</option>
+                            </select>
+                        </div>
+                        <div class="col">
+                            <label class="form-label">ZeroMQ Topic</label>
+                            <input class="form-control" @bind="_compForm.ZeroMQTopic" />
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col">
+                            <label class="form-label">心跳超時 (秒)</label>
+                            <input type="number" min="1" class="form-control" @bind="_compForm.TimeoutSeconds" />
+                        </div>
+                        <div class="col">
+                            <label class="form-label">Cron 表達式 (ScheduledJob 必填)</label>
+                            <input class="form-control" @bind="_compForm.CronExpression"
+                                   placeholder="例：0 30 9 * * ?" />
+                        </div>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="compActive"
+                               @bind="_compForm.IsActive" />
+                        <label class="form-check-label" for="compActive">啟用元件</label>
+                    </div>
+
+                    @if (_formError is not null)
+                    {
+                        <div class="alert alert-danger py-2">@_formError</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseComponentModal">取消</button>
+                    <button class="btn btn-primary" @onclick="SaveComponentAsync" disabled="@_saving">
+                        @if (_saving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                        }
+                        儲存
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // ── State ─────────────────────────────────────────────────────────────────
+
+    private OperatorSessionModal _operatorModal = null!;
+    private bool _loading = true;
+    private bool _saving;
+    private string? _formError;
+
+    private List<MonitoredSystem> _systems = [];
+    private Dictionary<string, List<MonitoredComponent>> _componentsBySystem = [];
+
+    // Pending action invoked after operator identity is confirmed
+    private Func<Task>? _pendingAction;
+
+    // ── System form state ─────────────────────────────────────────────────────
+    private bool _showSystemModal;
+    private MonitoredSystem? _editingSystem;
+    private SystemFormModel _sysForm = new();
+
+    // ── Component form state ──────────────────────────────────────────────────
+    private bool _showComponentModal;
+    private MonitoredComponent? _editingComponent;
+    private string _addComponentForSystemId = string.Empty;
+    private ComponentFormModel _compForm = new();
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    protected override async Task OnInitializedAsync()
+        => await LoadDataAsync();
+
+    public void Dispose() { }
+
+    // ── Data loading ──────────────────────────────────────────────────────────
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        try
+        {
+            var allSystems = await SystemRepo.GetAllActiveAsync();
+            _systems = allSystems.OrderBy(s => s.SystemId).ToList();
+
+            _componentsBySystem = [];
+            foreach (var sys in _systems)
+            {
+                var comps = await ComponentRepo.GetBySystemIdAsync(sys.SystemId);
+                _componentsBySystem[sys.SystemId] = comps.OrderBy(c => c.Name).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load management data.");
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    // ── Operator session gate ─────────────────────────────────────────────────
+
+    private async Task RequireOperatorThenAsync(Func<Task> action)
+    {
+        _pendingAction = action;
+        await _operatorModal.ShowAsync();
+    }
+
+    private async Task ExecutePendingAction()
+    {
+        if (_pendingAction is not null)
+        {
+            var action = _pendingAction;
+            _pendingAction = null;
+            await action();
+        }
+    }
+
+    // ── System CRUD ───────────────────────────────────────────────────────────
+
+    private Task OpenAddSystemAsync()
+    {
+        _editingSystem = null;
+        _sysForm = new SystemFormModel();
+        _formError = null;
+        _showSystemModal = true;
+        return Task.CompletedTask;
+    }
+
+    private Task OpenEditSystemAsync(MonitoredSystem system)
+    {
+        _editingSystem = system;
+        _sysForm = new SystemFormModel
+        {
+            SystemId = system.SystemId,
+            Name = system.Name,
+            MarketStart = system.MarketSession.StartTime,
+            MarketEnd = system.MarketSession.EndTime,
+            RecipientsText = string.Join("\n", system.AlertRecipients.Select(r => r.Value)),
+            IsActive = system.IsActive
+        };
+        _formError = null;
+        _showSystemModal = true;
+        return Task.CompletedTask;
+    }
+
+    private void CloseSystemModal()
+    {
+        _showSystemModal = false;
+        _editingSystem = null;
+    }
+
+    private async Task SaveSystemAsync()
+    {
+        _formError = null;
+        _saving = true;
+        try
+        {
+            var recipients = _sysForm.RecipientsText
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(r => !string.IsNullOrWhiteSpace(r))
+                .ToList();
+
+            var command = new UpsertMonitoredSystemCommand(
+                _sysForm.SystemId,
+                _sysForm.Name,
+                _sysForm.MarketStart,
+                _sysForm.MarketEnd,
+                recipients,
+                _sysForm.IsActive);
+
+            await UpsertSystemHandler.HandleAsync(command);
+            CloseSystemModal();
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            _formError = ex.Message;
+            Logger.LogWarning(ex, "System upsert failed.");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    // ── Component CRUD ────────────────────────────────────────────────────────
+
+    private Task OpenAddComponentAsync(string systemId)
+    {
+        _editingComponent = null;
+        _addComponentForSystemId = systemId;
+        _compForm = new ComponentFormModel { SystemId = systemId };
+        _formError = null;
+        _showComponentModal = true;
+        return Task.CompletedTask;
+    }
+
+    private Task OpenEditComponentAsync(MonitoredComponent component)
+    {
+        _editingComponent = component;
+        _addComponentForSystemId = component.SystemId;
+        _compForm = new ComponentFormModel
+        {
+            ComponentId = component.ComponentId,
+            SystemId = component.SystemId,
+            Name = component.Name,
+            ComponentType = component.ComponentType,
+            ZeroMQTopic = component.ZeroMQTopic,
+            TimeoutSeconds = component.HeartbeatTimeoutSeconds,
+            CronExpression = component.CronExpression ?? string.Empty,
+            IsActive = component.IsActive
+        };
+        _formError = null;
+        _showComponentModal = true;
+        return Task.CompletedTask;
+    }
+
+    private void CloseComponentModal()
+    {
+        _showComponentModal = false;
+        _editingComponent = null;
+    }
+
+    private async Task SaveComponentAsync()
+    {
+        _formError = null;
+        _saving = true;
+        try
+        {
+            var cronExpr = string.IsNullOrWhiteSpace(_compForm.CronExpression) ? null : _compForm.CronExpression;
+            var command = new UpsertMonitoredComponentCommand(
+                _compForm.ComponentId,
+                _compForm.SystemId,
+                _compForm.Name,
+                _compForm.ComponentType,
+                _compForm.ZeroMQTopic,
+                _compForm.TimeoutSeconds,
+                cronExpr,
+                null,
+                _compForm.IsActive);
+
+            await UpsertComponentHandler.HandleAsync(command);
+            CloseComponentModal();
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            _formError = ex.Message;
+            Logger.LogWarning(ex, "Component upsert failed.");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    // ── Maintenance Toggle ────────────────────────────────────────────────────
+
+    private async Task ToggleMaintenanceAsync(MonitoredSystem system)
+    {
+        await RequireOperatorThenAsync(async () =>
+        {
+            try
+            {
+                var cmd = new ToggleMaintenanceModeCommand(
+                    system.SystemId,
+                    !system.IsMaintenanceActive,
+                    Session.OperatorName!);
+
+                await MaintenanceHandler.HandleAsync(cmd);
+                await LoadDataAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Failed to toggle maintenance for {SystemId}.", system.SystemId);
+            }
+        });
+    }
+
+    // ── Form models ───────────────────────────────────────────────────────────
+
+    private sealed class SystemFormModel
+    {
+        public string SystemId { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public TimeOnly MarketStart { get; set; } = new TimeOnly(9, 0);
+        public TimeOnly MarketEnd { get; set; } = new TimeOnly(13, 30);
+        public string RecipientsText { get; set; } = string.Empty;
+        public bool IsActive { get; set; } = true;
+    }
+
+    private sealed class ComponentFormModel
+    {
+        public string ComponentId { get; set; } = string.Empty;
+        public string SystemId { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public ComponentType ComponentType { get; set; } = ComponentType.Service;
+        public string ZeroMQTopic { get; set; } = string.Empty;
+        public int TimeoutSeconds { get; set; } = 60;
+        public string CronExpression { get; set; } = string.Empty;
+        public bool IsActive { get; set; } = true;
+    }
+}
