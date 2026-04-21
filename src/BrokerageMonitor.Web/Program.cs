@@ -4,6 +4,7 @@ using BrokerageMonitor.Infrastructure.Notifications;
 using BrokerageMonitor.Infrastructure.Persistence;
 using BrokerageMonitor.Infrastructure.Scheduling;
 using BrokerageMonitor.Web.Components;
+using BrokerageMonitor.Web.Services;
 using NLog;
 using NLog.Web;
 using Quartz;
@@ -33,6 +34,9 @@ try
     // Register SignalR and the realtime notification service
     builder.Services.AddSignalR();
     builder.Services.AddRealtimeNotifications();
+
+    // Register circuit-scoped operator session (one instance per Blazor Server circuit)
+    builder.Services.AddScoped<OperatorSessionService>();
 
     // Add services to the container.
     builder.Services.AddRazorComponents()
