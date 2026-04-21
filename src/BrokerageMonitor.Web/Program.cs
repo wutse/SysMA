@@ -1,4 +1,5 @@
 using BrokerageMonitor.Infrastructure;
+using BrokerageMonitor.Infrastructure.Notifications;
 using BrokerageMonitor.Infrastructure.Persistence;
 using BrokerageMonitor.Infrastructure.Scheduling;
 using BrokerageMonitor.Web.Components;
@@ -25,6 +26,10 @@ try
     // Register SQLite persistence (DbConnectionFactory + DatabaseInitializer)
     builder.Services.AddPersistence();
 
+    // Register SignalR and the realtime notification service
+    builder.Services.AddSignalR();
+    builder.Services.AddRealtimeNotifications();
+
     // Add services to the container.
     builder.Services.AddRazorComponents()
         .AddInteractiveServerComponents();
@@ -45,6 +50,9 @@ try
 
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode();
+
+    // Map SignalR hub
+    app.MapHub<MonitorHub>("/hubs/monitor");
 
     // Schedule SmokeTestJob (startup verification — runs once at 01:00 each day)
     var scheduler = await app.Services
