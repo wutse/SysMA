@@ -65,6 +65,12 @@ internal sealed class FakeStartupComponentRepository : IMonitoredComponentReposi
     }
 }
 
+internal sealed class NullDailyExecutionCreatorService : IDailyExecutionCreatorService
+{
+    public Task CreateForDateAsync(DateOnly date, CancellationToken ct = default) => Task.CompletedTask;
+    public Task RecoverTodayAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -93,8 +99,9 @@ public sealed class StationStartupRecoveryServiceTests
         var cache = new ComponentStateCache();
         var timers = new FakeTimerRegistry();
         var events = new FakeEventDispatcher();
+        var executionCreator = new NullDailyExecutionCreatorService();
         var sut = new StationStartupRecoveryService(
-            stateRepo, componentRepo, cache, timers, events,
+            stateRepo, componentRepo, cache, timers, events, executionCreator,
             NullLogger<StationStartupRecoveryService>.Instance);
         return (sut, stateRepo, componentRepo, cache, timers, events);
     }

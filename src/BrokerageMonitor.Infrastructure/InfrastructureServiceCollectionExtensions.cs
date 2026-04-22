@@ -78,4 +78,22 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<IRealtimeNotificationService, SignalRNotificationService>();
         return services;
     }
+
+    /// <summary>
+    /// Registers the SMTP email and Teams webhook notification services (US-053, US-054).
+    /// Binds <see cref="SmtpOptions"/> from the <c>Smtp</c> configuration section.
+    /// Requires that <c>services.AddHttpClient()</c> has been called by the host.
+    /// </summary>
+    public static IServiceCollection AddNotificationServices(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.Configure<SmtpOptions>(opts =>
+            configuration.GetSection(SmtpOptions.SectionName).Bind(opts));
+
+        services.AddTransient<IEmailNotificationService, SmtpEmailNotificationService>();
+        services.AddHttpClient<ITeamsNotificationService, TeamsNotificationService>();
+
+        return services;
+    }
 }

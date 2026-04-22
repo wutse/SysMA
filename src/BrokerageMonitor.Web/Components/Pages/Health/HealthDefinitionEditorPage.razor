@@ -1,0 +1,365 @@
+@page "/health/editor"
+@page "/health/editor/{DefinitionId:guid}"
+@rendermode InteractiveServer
+@inject GetHealthDefinitionsQueryHandler HealthHandler
+@inject UpsertHealthMonitorDefinitionHandler UpsertHandler
+@inject IMonitoredSystemRepository SystemRepo
+@inject IMonitoredComponentRepository ComponentRepo
+@inject NavigationManager Nav
+@inject ILogger<HealthDefinitionEditorPage> Logger
+
+@using BrokerageMonitor.Application.DTOs
+@using BrokerageMonitor.Application.UseCases.Health
+@using BrokerageMonitor.Domain.Repositories
+@using BrokerageMonitor.Domain.ValueObjects
+@using Microsoft.Extensions.Logging
+@using System.ComponentModel.DataAnnotations
+
+<PageTitle>@(_isEdit ? "編輯健康規則" : "新增健康規則") — Brokerage Monitor</PageTitle>
+
+<div class="d-flex align-items-center mb-3">
+    <a href="/health" class="btn btn-outline-secondary btn-sm me-3">
+        <span class="bi bi-arrow-left me-1" aria-hidden="true"></span>
+        返回
+    </a>
+    <h2 class="mb-0">
+        <span class="bi bi-heart-pulse-fill me-2" aria-hidden="true"></span>
+        @(_isEdit ? "編輯健康監控規則" : "新增健康監控規則")
+    </h2>
+</div>
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">載入中…</span>
+        </div>
+    </div>
+}
+else
+{
+    <EditForm Model="_model" OnValidSubmit="HandleValidSubmitAsync">
+        <DataAnnotationsValidator />
+
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <div class="alert alert-danger">
+                <span class="bi bi-exclamation-triangle me-2" aria-hidden="true"></span>
+                @_errorMessage
+            </div>
+        }
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-header fw-bold">基本資料</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">規則名稱 <span class="text-danger">*</span></label>
+                        <InputText class="form-control" @bind-Value="_model.Name" placeholder="例如：每日收盤彙整" />
+                        <ValidationMessage For="() => _model.Name" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">系統 <span class="text-danger">*</span></label>
+                        <InputSelect class="form-select" @bind-Value="_model.SystemId">
+                            <option value="">請選擇系統</option>
+                            @foreach (var sys in _systems)
+                            {
+                                <option value="@sys">@sys</option>
+                            }
+                        </InputSelect>
+                        <ValidationMessage For="() => _model.SystemId" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">截止時間 <span class="text-danger">*</span></label>
+                        <input type="time" class="form-control" value="@_model.DeadlineTimeStr"
+                               @onchange="e => _model.DeadlineTimeStr = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-header fw-bold">排程設定</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">排程類型</label>
+                        <InputSelect class="form-select" @bind-Value="_model.ScheduleType">
+                            <option value="@ScheduleType.Cron">Cron 運算式</option>
+                            <option value="@ScheduleType.Weekly">每週</option>
+                            <option value="@ScheduleType.Daily">每日</option>
+                        </InputSelect>
+                    </div>
+                    @if (_model.ScheduleType == ScheduleType.Cron)
+                    {
+                        <div class="col-md-8">
+                            <label class="form-label">Cron 運算式 <span class="text-danger">*</span></label>
+                            <InputText class="form-control" @bind-Value="_model.CronExpression"
+                                       placeholder="例如：0 30 5 * * ?" />
+                        </div>
+                    }
+                    @if (_model.ScheduleType == ScheduleType.Weekly)
+                    {
+                        <div class="col-md-4">
+                            <label class="form-label">星期幾 <span class="text-danger">*</span></label>
+                            <InputSelect class="form-select" @bind-Value="_model.ScheduleDayOfWeek">
+                                @foreach (DayOfWeek dow in Enum.GetValues<DayOfWeek>())
+                                {
+                                    <option value="@dow">@GetDayOfWeekLabel(dow)</option>
+                                }
+                            </InputSelect>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-header fw-bold">監控元件 <span class="text-danger">*</span> (BI-014)</div>
+            <div class="card-body">
+                @if (_allComponents.Count == 0)
+                {
+                    <div class="alert alert-warning">目前無可用元件，請先建立系統元件。</div>
+                }
+                else
+                {
+                    <div class="row row-cols-1 row-cols-md-3 g-2">
+                        @foreach (var comp in _allComponents)
+                        {
+                            var isSelected = _selectedComponentIds.Contains(comp.ComponentId);
+                            <div class="col">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox"
+                                           id="comp-@comp.ComponentId"
+                                           checked="@isSelected"
+                                           @onchange="e => ToggleComponent(comp.ComponentId, (bool)(e.Value ?? false))" />
+                                    <label class="form-check-label" for="comp-@comp.ComponentId">
+                                        <span class="badge bg-light text-dark border me-1">
+                                            @(comp.ComponentType == ComponentType.ScheduledJob ? "📅" : "🔧")
+                                        </span>
+                                        @comp.Name
+                                        <span class="text-muted small">(@comp.SystemId)</span>
+                                    </label>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    @if (_componentValidationError)
+                    {
+                        <div class="text-danger mt-2 small">至少需要選取一個監控元件 (BI-014)。</div>
+                    }
+                }
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-header fw-bold">通知設定</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label">電子郵件收件者</label>
+                        <InputText class="form-control" @bind-Value="_model.EmailRecipientsRaw"
+                                   placeholder="多個地址以逗號分隔，例如：a@example.com, b@example.com" />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Teams Webhook URL</label>
+                        <InputText class="form-control" @bind-Value="_model.TeamsWebhookUrl"
+                                   placeholder="https://xxx.webhook.office.com/..." />
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check">
+                            <InputCheckbox class="form-check-input" @bind-Value="_model.SendOnFailure" id="sendOnFailure" />
+                            <label class="form-check-label" for="sendOnFailure">
+                                僅在失敗時發送通知 (SendOnFailure)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary" disabled="@_saving">
+                @if (_saving)
+                {
+                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                }
+                儲存
+            </button>
+            <a href="/health" class="btn btn-outline-secondary">取消</a>
+        </div>
+    </EditForm>
+}
+
+@code {
+    [Parameter] public Guid? DefinitionId { get; set; }
+
+    private bool _isEdit => DefinitionId.HasValue;
+    private bool _loading = true;
+    private bool _saving;
+    private string? _errorMessage;
+    private bool _componentValidationError;
+
+    private List<string> _systems = [];
+    private List<ComponentSummary> _allComponents = [];
+    private HashSet<string> _selectedComponentIds = new(StringComparer.OrdinalIgnoreCase);
+
+    private EditorModel _model = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var systemsTask = SystemRepo.GetAllActiveAsync();
+        var componentsTask = ComponentRepo.GetAllActiveAsync();
+
+        await Task.WhenAll(systemsTask, componentsTask);
+
+        _systems = systemsTask.Result.Select(s => s.SystemId).ToList();
+        _allComponents = componentsTask.Result
+            .Select(c => new ComponentSummary(c.ComponentId, c.Name, c.SystemId, c.ComponentType))
+            .OrderBy(c => c.SystemId)
+            .ThenBy(c => c.Name)
+            .ToList();
+
+        if (_isEdit)
+        {
+            await LoadExistingDefinitionAsync();
+        }
+
+        _loading = false;
+    }
+
+    private async Task LoadExistingDefinitionAsync()
+    {
+        var all = await HealthHandler.HandleAsync(new GetHealthDefinitionsQuery());
+        var def = all.FirstOrDefault(d => d.DefinitionId == DefinitionId);
+        if (def is null)
+        {
+            _errorMessage = "找不到指定的健康監控規則。";
+            return;
+        }
+
+        _model.Name = def.Name;
+        _model.SystemId = def.SystemId;
+        _model.DeadlineTimeStr = def.DeadlineTime.ToString("HH:mm");
+        _model.ScheduleType = def.ScheduleType;
+        _model.CronExpression = def.CronExpression;
+        _model.ScheduleDayOfWeek = def.ScheduleDayOfWeek;
+        _model.EmailRecipientsRaw = string.Join(", ", def.EmailRecipients);
+        _model.TeamsWebhookUrl = def.TeamsWebhookUrl;
+        _model.SendOnFailure = def.SendOnFailure;
+
+        _selectedComponentIds = def.WatchedComponents
+            .Select(w => w.ComponentId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void ToggleComponent(string componentId, bool selected)
+    {
+        if (selected)
+            _selectedComponentIds.Add(componentId);
+        else
+            _selectedComponentIds.Remove(componentId);
+
+        _componentValidationError = false;
+    }
+
+    private async Task HandleValidSubmitAsync()
+    {
+        _componentValidationError = false;
+        _errorMessage = null;
+
+        if (_selectedComponentIds.Count == 0)
+        {
+            _componentValidationError = true;
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            if (!TimeOnly.TryParse(_model.DeadlineTimeStr, out var deadlineTime))
+            {
+                _errorMessage = "截止時間格式無效。";
+                return;
+            }
+
+            var watchedComponents = _allComponents
+                .Where(c => _selectedComponentIds.Contains(c.ComponentId))
+                .Select(c => new WatchedComponent(c.ComponentId, c.ComponentType))
+                .ToList();
+
+            var emailRecipients = (_model.EmailRecipientsRaw ?? string.Empty)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(e => e.Contains('@'))
+                .ToList();
+
+            var command = new UpsertHealthMonitorDefinitionCommand(
+                DefinitionId: _isEdit ? DefinitionId : null,
+                SystemId: _model.SystemId,
+                Name: _model.Name,
+                DeadlineTime: deadlineTime,
+                ScheduleType: _model.ScheduleType,
+                CronExpression: _model.CronExpression,
+                ScheduleDayOfWeek: _model.ScheduleDayOfWeek,
+                WatchedComponents: watchedComponents,
+                EmailRecipients: emailRecipients,
+                TeamsWebhookUrl: string.IsNullOrWhiteSpace(_model.TeamsWebhookUrl) ? null : _model.TeamsWebhookUrl,
+                SendOnFailure: _model.SendOnFailure);
+
+            await UpsertHandler.HandleAsync(command);
+            Nav.NavigateTo("/health");
+        }
+        catch (ArgumentException ex)
+        {
+            _errorMessage = ex.Message;
+            Logger.LogWarning(ex, "Validation error saving health definition.");
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = "儲存失敗，請稍後再試。";
+            Logger.LogError(ex, "Error saving health definition.");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string GetDayOfWeekLabel(DayOfWeek dow) => dow switch
+    {
+        DayOfWeek.Sunday => "星期日",
+        DayOfWeek.Monday => "星期一",
+        DayOfWeek.Tuesday => "星期二",
+        DayOfWeek.Wednesday => "星期三",
+        DayOfWeek.Thursday => "星期四",
+        DayOfWeek.Friday => "星期五",
+        DayOfWeek.Saturday => "星期六",
+        _ => dow.ToString()
+    };
+
+    private sealed class EditorModel
+    {
+        [Required(ErrorMessage = "請輸入規則名稱")]
+        [StringLength(200, ErrorMessage = "名稱不可超過 200 字")]
+        public string Name { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "請選擇系統")]
+        public string SystemId { get; set; } = string.Empty;
+
+        public string DeadlineTimeStr { get; set; } = "18:00";
+
+        public ScheduleType ScheduleType { get; set; } = ScheduleType.Daily;
+        public string? CronExpression { get; set; }
+        public DayOfWeek? ScheduleDayOfWeek { get; set; }
+
+        public string? EmailRecipientsRaw { get; set; }
+        public string? TeamsWebhookUrl { get; set; }
+        public bool SendOnFailure { get; set; } = true;
+    }
+
+    private sealed record ComponentSummary(
+        string ComponentId,
+        string Name,
+        string SystemId,
+        ComponentType ComponentType);
+}

@@ -32,6 +32,9 @@ internal sealed class FakeHealthEvaluationService : IAggregateHealthEvaluationSe
         Received.Add(evt);
         return Task.CompletedTask;
     }
+
+    public Task EvaluateDefinitionAsync(Guid definitionId, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 
 internal sealed class FakeRealtimeNotificationService : IRealtimeNotificationService
