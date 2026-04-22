@@ -264,6 +264,51 @@ else
                         <label class="form-check-label" for="compActive">啟用元件</label>
                     </div>
 
+                    @* ── MailParsingRule Section (US-061) ── *@
+                    <hr />
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="compEnableMail"
+                               @bind="_compForm.EnableMailParsing" />
+                        <label class="form-check-label fw-semibold" for="compEnableMail">
+                            <span class="bi bi-envelope-fill me-1" aria-hidden="true"></span>
+                            啟用郵件解析規則
+                        </label>
+                    </div>
+
+                    @if (_compForm.EnableMailParsing)
+                    {
+                        <div class="border rounded p-3 mb-3 bg-light">
+                            <div class="row mb-3">
+                                <div class="col">
+                                    <label class="form-label">寄件者 Pattern (支援 * / ?)</label>
+                                    <input class="form-control" @bind="_compForm.MailFromPattern"
+                                           placeholder="例：*@@broker.com 或 alerts@@*" />
+                                </div>
+                                <div class="col">
+                                    <label class="form-label">主旨 Pattern (子字串比對)</label>
+                                    <input class="form-control" @bind="_compForm.MailSubjectPattern"
+                                           placeholder="例：[Settlement]" />
+                                </div>
+                            </div>
+                            <div class="row mb-2">
+                                <div class="col">
+                                    <label class="form-label">成功關鍵字 (逗號分隔)</label>
+                                    <input class="form-control" @bind="_compForm.MailSuccessKeywords"
+                                           placeholder="例：成功, Completed, OK" />
+                                </div>
+                                <div class="col">
+                                    <label class="form-label">失敗關鍵字 (逗號分隔，優先級高)</label>
+                                    <input class="form-control" @bind="_compForm.MailFailureKeywords"
+                                           placeholder="例：失敗, Error, FAILED" />
+                                </div>
+                            </div>
+                            <div class="text-muted small">
+                                <span class="bi bi-info-circle me-1" aria-hidden="true"></span>
+                                BI-016：失敗關鍵字優先；兩組關鍵字不可重疊。
+                            </div>
+                        </div>
+                    }
+
                     @if (_formError is not null)
                     {
                         <div class="alert alert-danger py-2">@_formError</div>
@@ -454,7 +499,12 @@ else
             ZeroMQTopic = component.ZeroMQTopic,
             TimeoutSeconds = component.HeartbeatTimeoutSeconds,
             CronExpression = component.CronExpression ?? string.Empty,
-            IsActive = component.IsActive
+            IsActive = component.IsActive,
+            EnableMailParsing = component.MailParsingRule is not null,
+            MailFromPattern = component.MailParsingRule?.FromPattern ?? string.Empty,
+            MailSubjectPattern = component.MailParsingRule?.SubjectPattern ?? string.Empty,
+            MailSuccessKeywords = component.MailParsingRule is { } r1 ? string.Join(", ", r1.SuccessKeywords) : string.Empty,
+            MailFailureKeywords = component.MailParsingRule is { } r2 ? string.Join(", ", r2.FailureKeywords) : string.Empty
         };
         _formError = null;
         _showComponentModal = true;
@@ -474,6 +524,33 @@ else
         try
         {
             var cronExpr = string.IsNullOrWhiteSpace(_compForm.CronExpression) ? null : _compForm.CronExpression;
+
+            MailParsingRule? mailRule = null;
+            if (_compForm.EnableMailParsing)
+            {
+                var successKws = _compForm.MailSuccessKeywords
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .ToList();
+                var failureKws = _compForm.MailFailureKeywords
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .ToList();
+
+                // Front-end validation: BI-016 keyword overlap check
+                var overlap = successKws.Intersect(failureKws, StringComparer.OrdinalIgnoreCase).ToList();
+                if (overlap.Count > 0)
+                {
+                    _formError = $"成功關鍵字與失敗關鍵字不可重複：{string.Join(", ", overlap)}";
+                    _saving = false;
+                    return;
+                }
+
+                mailRule = new MailParsingRule(
+                    _compForm.MailFromPattern,
+                    _compForm.MailSubjectPattern,
+                    successKws,
+                    failureKws);
+            }
+
             var command = new UpsertMonitoredComponentCommand(
                 _compForm.ComponentId,
                 _compForm.SystemId,
@@ -482,7 +559,7 @@ else
                 _compForm.ZeroMQTopic,
                 _compForm.TimeoutSeconds,
                 cronExpr,
-                null,
+                mailRule,
                 _compForm.IsActive);
 
             await UpsertComponentHandler.HandleAsync(command);
@@ -545,5 +622,12 @@ else
         public int TimeoutSeconds { get; set; } = 60;
         public string CronExpression { get; set; } = string.Empty;
         public bool IsActive { get; set; } = true;
+
+        // ── MailParsingRule fields (US-061) ──
+        public bool EnableMailParsing { get; set; } = false;
+        public string MailFromPattern { get; set; } = string.Empty;
+        public string MailSubjectPattern { get; set; } = string.Empty;
+        public string MailSuccessKeywords { get; set; } = string.Empty;
+        public string MailFailureKeywords { get; set; } = string.Empty;
     }
 }
