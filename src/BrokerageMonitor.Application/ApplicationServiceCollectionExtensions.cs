@@ -79,6 +79,9 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<GetHealthDefinitionsQueryHandler>();
         services.AddScoped<UpsertHealthMonitorDefinitionHandler>();
 
+        // ---- EP-010: Mail channel processor (scoped — depends on scoped repositories) ----
+        services.AddScoped<IMailChannelProcessor, MailChannelProcessor>();
+
         // ---- Startup utilities (scoped — depend on scoped repositories) ----
         services.AddScoped<AppSettingsImporter>();
 
