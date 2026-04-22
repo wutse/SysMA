@@ -4,12 +4,14 @@ using BrokerageMonitor.Application.Startup;
 using BrokerageMonitor.Domain.Events;
 using BrokerageMonitor.Application.UseCases.Alerts;
 using BrokerageMonitor.Application.UseCases.Dashboard;
+using BrokerageMonitor.Application.UseCases.Health;
 using BrokerageMonitor.Application.UseCases.History;
 using BrokerageMonitor.Application.UseCases.Maintenance;
 using BrokerageMonitor.Application.UseCases.Management;
 using BrokerageMonitor.Application.UseCases.StateOverride;
 using BrokerageMonitor.Domain.ValueObjects;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
 namespace BrokerageMonitor.Application;
@@ -43,8 +45,11 @@ public static class ApplicationServiceCollectionExtensions
         // ---- Heartbeat processor (scoped — depends on scoped repositories and dispatcher) ----
         services.AddScoped<IHeartbeatProcessor, HeartbeatProcessor>();
 
-        // ---- Aggregate health evaluation stub (no-op until US-049/050 are implemented) ----
-        services.AddSingleton<IAggregateHealthEvaluationService, NullAggregateHealthEvaluationService>();
+        // ---- Aggregate health evaluation (scoped — depends on scoped repositories) ----
+        services.AddScoped<IAggregateHealthEvaluationService, AggregateHealthEvaluationService>();
+
+        // ---- Daily execution creator (scoped — depends on scoped repositories) ----
+        services.AddScoped<IDailyExecutionCreatorService, DailyExecutionCreatorService>();
 
         // ---- Heartbeat timer registry stub (no-op until ZeroMQ is wired via AddZeroMq) ----
         services.AddSingleton<IHeartbeatTimerRegistry, NullHeartbeatTimerRegistry>();
@@ -52,8 +57,10 @@ public static class ApplicationServiceCollectionExtensions
         // ---- Audit logger stub (no-op until persistence layer is wired) ----
         services.AddSingleton<IAuditLogger, NullAuditLogger>();
 
-        // ---- Email notification stub ----
-        services.AddSingleton<IEmailNotificationService, NullEmailNotificationService>();
+        // ---- Email notification — real implementation registered by Infrastructure.AddNotificationServices() ----
+        // ---- Fallback stub kept for test projects that do not load the Infrastructure layer ----
+        services.TryAddSingleton<IEmailNotificationService, NullEmailNotificationService>();
+        services.TryAddSingleton<ITeamsNotificationService, NullTeamsNotificationService>();
 
         // ---- Use-case handlers (scoped) ----
         services.AddScoped<GetDashboardQueryHandler>();
@@ -67,6 +74,10 @@ public static class ApplicationServiceCollectionExtensions
             sp.GetRequiredService<AlertEvaluationService>());
         services.AddScoped<GetExecutionHistoryQueryHandler>();
         services.AddScoped<GetAuditLogsQueryHandler>();
+
+        // ---- EP-009: Health monitoring use cases ----
+        services.AddScoped<GetHealthDefinitionsQueryHandler>();
+        services.AddScoped<UpsertHealthMonitorDefinitionHandler>();
 
         // ---- Startup utilities (scoped — depend on scoped repositories) ----
         services.AddScoped<AppSettingsImporter>();
@@ -99,6 +110,9 @@ internal sealed class NullAggregateHealthEvaluationService : IAggregateHealthEva
 {
     public Task UpdateComponentProgressAsync(ComponentStatusChanged evt, CancellationToken ct = default)
         => Task.CompletedTask;
+
+    public Task EvaluateDefinitionAsync(Guid definitionId, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 
 internal sealed class NullHeartbeatTimerRegistry : IHeartbeatTimerRegistry
@@ -117,6 +131,15 @@ internal sealed class NullEmailNotificationService : IEmailNotificationService
 
     public Task SendHealthSummaryAsync(
         HealthSummaryEmailRequest request,
+        CancellationToken ct = default)
+        => Task.CompletedTask;
+}
+
+internal sealed class NullTeamsNotificationService : ITeamsNotificationService
+{
+    public Task SendHealthSummaryAsync(
+        HealthSummaryEmailRequest request,
+        string webhookUrl,
         CancellationToken ct = default)
         => Task.CompletedTask;
 }

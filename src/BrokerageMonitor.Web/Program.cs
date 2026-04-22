@@ -32,6 +32,9 @@ try
     // Register Application-layer services (handlers, state cache, broadcaster)
     builder.Services.AddApplicationServices();
 
+    // Register startup recovery service (US-030, US-052)
+    builder.Services.AddScoped<IStartupRecoveryService, StationStartupRecoveryService>();
+
     // Bind Systems[] from appsettings.json for AppSettingsImporter (FR-031 / US-045)
     var systemConfigs = builder.Configuration.GetSection("Systems").Get<List<SystemConfig>>() ?? [];
     foreach (var sc in systemConfigs)
@@ -40,6 +43,9 @@ try
     // Register SignalR and the realtime notification service
     builder.Services.AddSignalR();
     builder.Services.AddRealtimeNotifications();
+
+    // Register SMTP and Teams notification services (US-053, US-054)
+    builder.Services.AddNotificationServices(builder.Configuration);
 
     // Register circuit-scoped operator session (one instance per Blazor Server circuit)
     builder.Services.AddScoped<OperatorSessionService>();
@@ -76,6 +82,14 @@ try
         scheduler,
         cronExpression: "0 0 1 * * ?");
 
+    // Schedule DailyExecutionCreatorJob — runs daily at 05:30 (US-048)
+    await QuartzJobScheduler.ScheduleCronJobAsync<DailyExecutionCreatorJob>(
+        scheduler,
+        cronExpression: "0 30 5 * * ?");
+
+    // Schedule AggregateHealthEvaluationJob — dynamically per definition at startup (US-051)
+    // Jobs per definition are scheduled after DB init, inside the startup scope below.
+
     // Run database initialisation (WAL pragma + schema bootstrap)
     await app.Services
         .GetRequiredService<DatabaseInitializer>()
@@ -87,6 +101,32 @@ try
         await scope.ServiceProvider
             .GetRequiredService<AppSettingsImporter>()
             .ImportIfEmptyAsync();
+    }
+
+    // Schedule AggregateHealthEvaluationJob per definition (US-051)
+    using (var scope = app.Services.CreateScope())
+    {
+        var definitionRepo = scope.ServiceProvider
+            .GetRequiredService<BrokerageMonitor.Domain.Repositories.IHealthMonitorDefinitionRepository>();
+        var definitions = await definitionRepo.GetAllActiveAsync();
+        foreach (var def in definitions)
+        {
+            var jobData = new JobDataMap
+            {
+                [AggregateHealthEvaluationJob.DefinitionIdKey] = def.DefinitionId.ToString()
+            };
+            var cron = $"0 {def.DeadlineTime.Minute} {def.DeadlineTime.Hour} * * ?";
+            await QuartzJobScheduler.ScheduleCronJobAsync<AggregateHealthEvaluationJob>(
+                scheduler, cron, $"AggregateHealthEval-{def.DefinitionId}", jobData);
+        }
+    }
+
+    // Station startup recovery — restore component states and recover DailyExecutions (US-030, US-052)
+    using (var scope = app.Services.CreateScope())
+    {
+        await scope.ServiceProvider
+            .GetRequiredService<IStartupRecoveryService>()
+            .RecoverAsync();
     }
 
     app.Run();

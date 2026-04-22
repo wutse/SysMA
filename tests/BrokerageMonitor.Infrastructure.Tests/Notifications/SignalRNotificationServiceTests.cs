@@ -55,10 +55,12 @@ internal sealed class NullBroadcaster : IMonitorBroadcaster
     public event Action<string, string>? AlertTriggered;
     public event Action<string>? AlertAcknowledged;
     public event Action<string, bool>? MaintenanceModeChanged;
+    public event Action<Guid, Guid, Domain.ValueObjects.NotificationType>? HealthNotificationReceived;
     public void PublishComponentStatusChanged(string c, string s, ComponentStatus n) { }
     public void PublishAlertTriggered(string s, string c) { }
     public void PublishAlertAcknowledged(string s) { }
     public void PublishMaintenanceModeChanged(string s, bool a) { }
+    public void PublishHealthNotificationReceived(Guid d, Guid e, Domain.ValueObjects.NotificationType t) { }
 }
 
 [TestClass]

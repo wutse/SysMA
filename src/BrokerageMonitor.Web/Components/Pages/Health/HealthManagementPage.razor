@@ -1,0 +1,198 @@
+@page "/health"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject GetHealthDefinitionsQueryHandler HealthHandler
+@inject IMonitoredSystemRepository SystemRepo
+@inject IMonitorBroadcaster Broadcaster
+@inject ILogger<HealthManagementPage> Logger
+
+@using BrokerageMonitor.Application.DTOs
+@using BrokerageMonitor.Application.Services
+@using BrokerageMonitor.Application.UseCases.Health
+@using BrokerageMonitor.Domain.Repositories
+@using BrokerageMonitor.Domain.ValueObjects
+@using Microsoft.Extensions.Logging
+
+<PageTitle>健康監控管理 — Brokerage Monitor</PageTitle>
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0">
+        <span class="bi bi-heart-pulse-fill me-2" aria-hidden="true"></span>
+        彙整健康監控
+    </h2>
+    <a href="/health/editor" class="btn btn-success btn-sm">
+        <span class="bi bi-plus-lg me-1" aria-hidden="true"></span>
+        新增規則
+    </a>
+</div>
+
+@* ── System filter ──────────────────────────────────────────────────────────── *@
+<div class="card mb-4 shadow-sm">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">篩選系統</label>
+                <select class="form-select" @onchange="OnSystemFilterChangedAsync">
+                    <option value="">全部系統</option>
+                    @foreach (var sys in _systems)
+                    {
+                        <option value="@sys">@sys</option>
+                    }
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">載入中…</span>
+        </div>
+    </div>
+}
+else if (_definitions.Count == 0)
+{
+    <div class="alert alert-info">
+        <span class="bi bi-info-circle me-2" aria-hidden="true"></span>
+        尚無彙整健康規則。請點選「新增規則」建立第一個規則。
+    </div>
+}
+else
+{
+    @foreach (var def in _definitions)
+    {
+        <div class="card mb-3 shadow-sm">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <div>
+                    <span class="fw-bold">@def.Name</span>
+                    <span class="text-muted small ms-2">截止 @def.DeadlineTime.ToString("HH:mm")</span>
+                    <span class="badge bg-secondary ms-2">@def.ScheduleType</span>
+                    @if (!def.IsActive)
+                    {
+                        <span class="badge bg-danger ms-1">停用</span>
+                    }
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="/health/editor/@def.DefinitionId" class="btn btn-outline-primary btn-sm">
+                        <span class="bi bi-pencil" aria-hidden="true"></span>
+                    </a>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <p class="mb-1 text-muted small">
+                            <strong>系統：</strong>@def.SystemId &nbsp;
+                            <strong>監控元件：</strong>@def.WatchedComponents.Count 個
+                        </p>
+                        <div class="d-flex flex-wrap gap-1 mt-1">
+                            @foreach (var wc in def.WatchedComponents)
+                            {
+                                <span class="badge bg-light text-dark border">
+                                    @(wc.ComponentType == ComponentType.ScheduledJob ? "📅" : "🔧")
+                                    @wc.ComponentName
+                                </span>
+                            }
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        @if (def.TodayExecution is not null)
+                        {
+                            var exe = def.TodayExecution;
+                            var (badgeCss, label) = GetExecutionBadge(exe.Status);
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="badge @badgeCss">今日 @label</span>
+                                <span class="text-muted small">
+                                    @exe.CompletedComponents.Count / @def.WatchedComponents.Count 完成
+                                </span>
+                            </div>
+                            @if (exe.FailedComponents.Count > 0)
+                            {
+                                <div class="text-danger small mt-1">
+                                    未完成：@string.Join("、", exe.FailedComponents)
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(exe.MissedReason))
+                            {
+                                <div class="text-muted small mt-1">原因：@exe.MissedReason</div>
+                            }
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary">今日尚無執行記錄</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<HealthMonitorDefinitionDto> _definitions = [];
+    private List<string> _systems = [];
+    private string? _filterSystemId;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Broadcaster.HealthNotificationReceived += OnHealthNotification;
+
+        await LoadSystemsAsync();
+        await LoadDefinitionsAsync();
+    }
+
+    private async Task LoadSystemsAsync()
+    {
+        var systems = await SystemRepo.GetAllActiveAsync();
+        _systems = systems.Select(s => s.SystemId).ToList();
+    }
+
+    private async Task LoadDefinitionsAsync()
+    {
+        _loading = true;
+        try
+        {
+            var query = new GetHealthDefinitionsQuery(_filterSystemId);
+            _definitions = (await HealthHandler.HandleAsync(query)).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load health definitions.");
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnSystemFilterChangedAsync(ChangeEventArgs e)
+    {
+        _filterSystemId = e.Value?.ToString();
+        await LoadDefinitionsAsync();
+    }
+
+    private void OnHealthNotification(Guid definitionId, Guid executionId, NotificationType notificationType)
+    {
+        // Reload definitions on any health notification to reflect latest status
+        _ = InvokeAsync(LoadDefinitionsAsync);
+    }
+
+    private static (string css, string label) GetExecutionBadge(DailyExecutionStatus status) =>
+        status switch
+        {
+            DailyExecutionStatus.InProgress => ("bg-primary", "執行中"),
+            DailyExecutionStatus.Success => ("bg-success", "成功"),
+            DailyExecutionStatus.Failed => ("bg-danger", "失敗"),
+            DailyExecutionStatus.Missed => ("bg-warning text-dark", "未執行"),
+            DailyExecutionStatus.Exempted => ("bg-info text-dark", "豁免"),
+            _ => ("bg-secondary", status.ToString())
+        };
+
+    public void Dispose()
+    {
+        Broadcaster.HealthNotificationReceived -= OnHealthNotification;
+    }
+}

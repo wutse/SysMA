@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 namespace BrokerageMonitor.Application.Startup;
 
 /// <summary>
-/// Executes station-restart recovery on application startup (US-030, FR-033).
+/// Executes station-restart recovery on application startup (US-030, US-052, FR-033, FR-044).
 ///
 /// Recovery steps:
 /// 1. Load all persisted <see cref="Domain.Aggregates.ComponentState"/> records
@@ -18,6 +18,7 @@ namespace BrokerageMonitor.Application.Startup;
 ///    and raise <see cref="ComponentStatusChanged"/> to trigger alert evaluation.
 /// 4. Arm heartbeat timers for <c>Service</c> components that are not
 ///    in <c>Stopped</c> or <c>Maintenance</c> state.
+/// 5. Recover today's <c>DailyExecution</c> instances (FR-044, US-052).
 /// </summary>
 public sealed class StationStartupRecoveryService : IStartupRecoveryService
 {
@@ -26,6 +27,7 @@ public sealed class StationStartupRecoveryService : IStartupRecoveryService
     private readonly IComponentStateCache _stateCache;
     private readonly IHeartbeatTimerRegistry _timerRegistry;
     private readonly IDomainEventDispatcher _eventDispatcher;
+    private readonly IDailyExecutionCreatorService _dailyExecutionCreator;
     private readonly ILogger<StationStartupRecoveryService> _logger;
 
     public StationStartupRecoveryService(
@@ -34,6 +36,7 @@ public sealed class StationStartupRecoveryService : IStartupRecoveryService
         IComponentStateCache stateCache,
         IHeartbeatTimerRegistry timerRegistry,
         IDomainEventDispatcher eventDispatcher,
+        IDailyExecutionCreatorService dailyExecutionCreator,
         ILogger<StationStartupRecoveryService> logger)
     {
         _stateRepository = stateRepository;
@@ -41,6 +44,7 @@ public sealed class StationStartupRecoveryService : IStartupRecoveryService
         _stateCache = stateCache;
         _timerRegistry = timerRegistry;
         _eventDispatcher = eventDispatcher;
+        _dailyExecutionCreator = dailyExecutionCreator;
         _logger = logger;
     }
 
@@ -104,6 +108,17 @@ public sealed class StationStartupRecoveryService : IStartupRecoveryService
             {
                 _timerRegistry.ResetTimer(component.ComponentId);
             }
+        }
+
+        // Step 5 — recover today's DailyExecution instances (FR-044, US-052)
+        try
+        {
+            await _dailyExecutionCreator.RecoverTodayAsync(ct);
+            _logger.LogInformation("DailyExecution recovery for today completed.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "DailyExecution recovery failed. Station will continue normally.");
         }
 
         _logger.LogInformation("Station startup recovery completed.");
