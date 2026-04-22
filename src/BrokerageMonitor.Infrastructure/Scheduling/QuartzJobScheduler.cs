@@ -68,4 +68,39 @@ public static class QuartzJobScheduler
 
         await scheduler.ScheduleJob(job, trigger, cancellationToken);
     }
+
+    /// <summary>
+    /// Schedules a <typeparamref name="TJob"/> using the provided cron expression and a custom
+    /// job name (for scenarios requiring multiple instances of the same job type, e.g.,
+    /// per-definition health evaluation jobs).
+    /// </summary>
+    public static async Task ScheduleCronJobAsync<TJob>(
+        IScheduler scheduler,
+        string cronExpression,
+        string jobName,
+        JobDataMap? jobDataMap = null,
+        CancellationToken cancellationToken = default)
+        where TJob : IJob
+    {
+        var jobKey = new JobKey(jobName, typeof(TJob).Name);
+
+        var jobBuilder = JobBuilder.Create<TJob>()
+            .WithIdentity(jobKey)
+            .StoreDurably();
+
+        if (jobDataMap is not null)
+        {
+            jobBuilder = jobBuilder.UsingJobData(jobDataMap);
+        }
+
+        var job = jobBuilder.Build();
+
+        var trigger = TriggerBuilder.Create()
+            .WithIdentity($"{jobName}-trigger", typeof(TJob).Name)
+            .ForJob(jobKey)
+            .WithCronSchedule(cronExpression)
+            .Build();
+
+        await scheduler.ScheduleJob(job, trigger, cancellationToken);
+    }
 }
