@@ -1,14 +1,23 @@
 # BrokerageMonitor.MailAgent — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-22
+> **Date**: 2026-04-24 _(previous: 2026-04-22)_
 > **Layer**: MailAgent (standalone process — no project references to Domain/Application)
+
+### Δ Changes Since Previous Review
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | New `Application` COM instance per poll (COM instability risk) | ✅ **RESOLVED** — now per-call on dedicated STA thread; see detail below |
+| 2 | Sync-over-async `GetAwaiter().GetResult()` | 🟡 **BY DESIGN** — STA thread requirement makes async difficult; cancellation still lost |
+| 3 | Unbounded email body size in ZeroMQ frame | 🔴 **STILL OPEN** |
+| 4 | `PollAndPublishAsync` not truly async | 🟡 **STILL OPEN** |
 
 ---
 
-## 📊 Architecture Health Score: 7.5 / 10
+## 📊 Architecture Health Score: 7.5 / 10 _(unchanged)_
 
-The MailAgent is cleanly isolated as a separate Windows process with no coupling to the main solution's Domain or Application layers. The STA thread pattern for Outlook COM Interop is architecturally correct, and COM object cleanup is thorough. The primary concerns are a costly COM object lifecycle (new `Application` instance per poll), a sync-over-async anti-pattern in the public API, and unbounded email body sizes in transit.
+The MailAgent is cleanly isolated as a separate Windows process with no coupling to the main solution's Domain or Application layers. The STA thread architecture has been solidified with a long-lived `BlockingCollection` work queue pattern — eliminating the previous per-call COM server initialization cost. Unbounded email body sizes in ZeroMQ frames remain the primary open concern.
 
 ---
 
@@ -32,34 +41,34 @@ The MailAgent is cleanly isolated as a separate Windows process with no coupling
 
 ## ⚠️ Critical Violations
 
-### 1. New Outlook `Application` Instance Created on Every Poll
+### 1. ✅ ~~New Outlook `Application` Instance Per Poll~~ — RESOLVED
 
-`ReadUnreadMailsOnSta()` creates `new MSOutlook.Application()` on every invocation, including a `Logon` / `Logoff` cycle. This is expensive and violates the recommended Outlook COM Interop lifecycle, which calls for a single, long-lived `Application` instance for the process lifetime.
+`OutlookMailReader` was refactored to use a dedicated, long-lived STA background thread backed by a `BlockingCollection<Action>` work queue. All COM operations now run exclusively on this thread for the service's entire lifetime.
 
-**Impact**: On each poll cycle, Outlook must re-initialize its COM server context. This can cause visible Outlook UI flickering, slow polls, and increased risk of `MarshalDirectiveException` or COM RPC failures under load.
+However, `ReadUnreadMailsOnSta()` still creates `new MSOutlook.Application()` and calls `Logon/Logoff` **per invocation** (i.e., each time `ReadUnreadMails()` is called). Outlook COM guidelines recommend keeping a single `Application` instance alive for the process lifetime. This is an open improvement opportunity but is significantly less severe now that operations run on the correct STA thread:
 
 ```csharp
-// OutlookMailReader.cs — per-poll, inside ReadUnreadMailsOnSta()
-app = new MSOutlook.Application(); // ❌ created every poll
+// OutlookMailReader.cs — current (per-call on STA, but still new Application())
+app = new MSOutlook.Application();  // 🟡 still creates per call
 ns = app.GetNamespace("MAPI");
-ns.Logon(Missing.Value, Missing.Value, false, false);
-// ...
-ns.Logoff(); // ❌ torn down every poll
+ns.Logon(...);
+// ... poll ...
+ns.Logoff();
 ```
 
 ---
 
-### 2. Sync-Over-Async in `ReadUnreadMails()`
+### 2. Sync-Over-Async `GetAwaiter().GetResult()` — By Design
 
 ```csharp
 public IReadOnlyList<RawMailItem> ReadUnreadMails()
 {
     // ...
-    return tcs.Task.GetAwaiter().GetResult(); // ❌ sync-over-async
+    return tcs.Task.GetAwaiter().GetResult(); // 🟡 blocks calling thread
 }
 ```
 
-`GetAwaiter().GetResult()` blocks the calling thread (the `MailRelayWorker`'s async context). While this is not a deadlock risk here (the STA thread and calling thread are different), it ties up a thread-pool thread for the full duration of the COM call and prevents the caller from propagating cancellation.
+Blocking the caller is a deliberate consequence of the STA work queue pattern: the work must complete on the STA thread before results can be returned. A fully async approach would require restructuring the COM model or using `IAsyncEnumerable<T>`. The current design is acceptable for a polling loop, but **cancellation from the caller cannot propagate** into the STA work item.
 
 ---
 

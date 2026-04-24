@@ -1,14 +1,23 @@
 # BrokerageMonitor.Infrastructure — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-22
+> **Date**: 2026-04-24 _(previous: 2026-04-22)_
 > **Layer**: Infrastructure (depends on Domain + Application)
+
+### Δ Changes Since Previous Review
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | Reflection-based domain mutation in `DailyExecutionRepository` | ✅ **FIXED** |
+| 2 | `SmtpClient` deprecated | 🔴 **STILL OPEN** |
+| 3 | Fire-and-forget in `OnTimerFired` | 🟡 **STILL OPEN** |
+| 4 | Inconsistent `IDbConnection` open state | 🟡 **STILL OPEN** |
 
 ---
 
-## 📊 Architecture Health Score: 6.5 / 10
+## 📊 Architecture Health Score: 7 / 10 _(improved from 6.5)_
 
-The Infrastructure layer is generally sound: parameterized Dapper queries prevent SQL injection, key repositories use transactions, ZeroMQ reconnection has proper exponential backoff, and email templates apply HTML encoding. The critical architectural violation is reflection-based domain object mutation in `DailyExecutionRepository`, which defeats aggregate encapsulation. The deprecated `SmtpClient` and a fire-and-forget timer callback are the other primary concerns.
+The Infrastructure layer is generally sound: parameterized Dapper queries prevent SQL injection, key repositories use transactions, ZeroMQ reconnection has proper exponential backoff, and email templates apply HTML encoding. The critical architectural violation (reflection-based domain mutation) has been resolved by introducing a `Rehydrate()` factory method on `DailyExecution`. The deprecated `SmtpClient` and a fire-and-forget timer callback remain as open concerns.
 
 ---
 
@@ -32,23 +41,26 @@ The Infrastructure layer is generally sound: parameterized Dapper queries preven
 
 ## ⚠️ Critical Violations
 
-### 1. Reflection-Based Domain Object Mutation in `DailyExecutionRepository`
+### 1. ✅ ~~Reflection-Based Domain Object Mutation in `DailyExecutionRepository`~~ — FIXED
 
-`MapToDomain` uses `BindingFlags.NonPublic` reflection to forcibly set `private` properties and append to `private` backing lists:
+A `DailyExecution.Rehydrate()` static factory method has been added to the domain aggregate, allowing `DailyExecutionRepository.MapToDomain()` to reconstitute the object without bypassing encapsulation:
 
 ```csharp
-SetPrivateProperty(execution, "CreatedAt", DateTimeOffset.Parse(row.CreatedAt));
-SetPrivateProperty(execution, "Status", status);
-AppendToPrivateList<string>(execution, "_completedComponents", items);
+// DailyExecution.cs (new)
+public static DailyExecution Rehydrate(
+    Guid executionId, Guid definitionId, string systemId,
+    DateOnly executionDate, DailyExecutionStatus status,
+    DateTimeOffset createdAt, DateTimeOffset? evaluatedAt,
+    IEnumerable<string>? completedComponents,
+    IEnumerable<string>? failedComponents,
+    string? missedReason, DateTimeOffset? notificationSentAt) { ... }
+
+// DailyExecutionRepository.cs (updated)
+private static DailyExecution MapToDomain(DailyExecutionRow row)
+    => DailyExecution.Rehydrate(
+        executionId: Guid.Parse(row.ExecutionId),
+        ...); // ✅ No reflection
 ```
-
-**This is a critical Clean Architecture violation.** It:
-- Bypasses the domain model's encapsulation
-- Creates tight coupling from Infrastructure to internal aggregate implementation details (field name strings)
-- Silently breaks at runtime if any field/property is renamed
-- Indicates a domain design gap (missing rehydration constructor on `DailyExecution`)
-
-**Root cause**: `DailyExecution`'s constructor uses `DateTimeOffset.UtcNow` internally, so there is no way to rehydrate with the persisted `CreatedAt` value without reflection.
 
 ---
 

@@ -1,14 +1,26 @@
 # BrokerageMonitor.Application — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-22
+> **Date**: 2026-04-24 _(previous: 2026-04-22)_
 > **Layer**: Application (depends on Domain only)
+
+### Δ Changes Since Previous Review
+
+| # | Issue | Status |
+|---|-------|--------|
+| — | `IAuditLogger` (NullAuditLogger stub) — Infrastructure now provides concrete `AuditLogger` via `TryAddScoped` override | ✅ **FIXED** |
+| 1 | Cache invalidation gap (`ToggleMaintenanceModeHandler` / `OverrideComponentStateHandler`) | 🔴 **STILL OPEN** |
+| 2 | Synthetic `PreviousStatus = Unknown` for `ComponentLost` | 🔴 **STILL OPEN** |
+| 3 | N+1 dashboard query | 🟡 **STILL OPEN** |
+| 5 | `FinalizeExecutionAsync` notification semantics | 🟡 **STILL OPEN** |
+| 6 | `AppSettingsImporter` — locale-sensitive `TimeOnly.Parse()` | 🟡 **STILL OPEN** |
+| — | **NEW**: `ComponentStateOverridden` event not handled by `DomainEventDispatcher` | 🔴 **NEW FINDING** |
 
 ---
 
 ## 📊 Architecture Health Score: 7 / 10
 
-The Application layer is well-structured with clear CQRS-like use-case handlers, a robust domain event dispatcher with handler isolation, and a thoughtful null-object pattern for testing. Key concerns are a cache invalidation gap in two handlers, an N+1 query in the dashboard, inaccurate synthetic event data in the dispatcher, and a silently incomplete audit logging pipeline.
+The Application layer is well-structured with clear CQRS-like use-case handlers, a robust domain event dispatcher with handler isolation, and a thoughtful null-object pattern for testing. Key concerns are a cache invalidation gap in two handlers, an N+1 query in the dashboard, inaccurate synthetic event data in the dispatcher, and a newly discovered dead-code path in the event dispatcher for component state overrides.
 
 ---
 
@@ -80,13 +92,27 @@ foreach (var system in systems)
 
 ---
 
-### 4. Audit Logging Is Silently Disabled in Production
+### 4. ~~Audit Logging Is Silently Disabled~~ — ✅ FIXED
 
-`AddApplicationServices()` registers `NullAuditLogger` as a singleton:
+`InfrastructureServiceCollectionExtensions.AddPersistence()` now registers `services.AddScoped<IAuditLogger, AuditLogger>()`. The Application layer correctly uses `TryAddScoped` for the `NullAuditLogger` stub, so the Infrastructure implementation wins when both layers are loaded. Audit records are now written for all operator actions.
+
+---
+
+### 4 (new). `ComponentStateOverridden` Event Is Not Dispatched to Alert Evaluation
+
+`OverrideComponentStateHandler` dispatches a `ComponentStateOverridden` event via `IDomainEventDispatcher.DispatchAsync`, but the dispatcher's `switch` statement has no case for this event type:
+
 ```csharp
-services.AddSingleton<IAuditLogger, NullAuditLogger>();
+// DomainEventDispatcher.cs
+switch (@event)
+{
+    case ComponentStatusChanged e: ...  // ✅ handled
+    case ComponentLost e:          ...  // ✅ handled
+    default: break;                     // ❌ ComponentStateOverridden falls here
+}
 ```
-No concrete `IAuditLogger` implementation exists in Infrastructure that delegates to `IAuditLogRepository`. **All operator actions are silently discarded** in every deployment. The `IAuditLogRepository` and its SQLite implementation are wired and unused.
+
+**Impact**: When an operator manually overrides a component state to `Normal` or `Alerting`, `AlertEvaluationService` is never called. Active alerts are not cleared; no new alerts are raised. The UI reflects the change via a direct SignalR push, but the alert subsystem remains unaware of the state transition.
 
 ---
 

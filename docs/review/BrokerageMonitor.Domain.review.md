@@ -1,7 +1,7 @@
 # BrokerageMonitor.Domain — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-22
+> **Date**: 2026-04-24
 > **Layer**: Domain (innermost — no project references)
 
 ---
