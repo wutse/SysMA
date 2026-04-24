@@ -36,6 +36,9 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IAuditLogRepository, AuditLogRepository>();
         services.AddScoped<INotificationInboxRepository, NotificationInboxRepository>();
 
+        // Concrete IAuditLogger — delegates to IAuditLogRepository (replaces NullAuditLogger stub)
+        services.AddScoped<IAuditLogger, AuditLogger>();
+
         return services;
     }
 

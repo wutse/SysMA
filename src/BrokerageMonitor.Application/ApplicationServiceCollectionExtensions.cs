@@ -54,8 +54,8 @@ public static class ApplicationServiceCollectionExtensions
         // ---- Heartbeat timer registry stub (no-op until ZeroMQ is wired via AddZeroMq) ----
         services.AddSingleton<IHeartbeatTimerRegistry, NullHeartbeatTimerRegistry>();
 
-        // ---- Audit logger stub (no-op until persistence layer is wired) ----
-        services.AddSingleton<IAuditLogger, NullAuditLogger>();
+        // ---- Audit logger stub (no-op until persistence layer overrides via AddPersistence) ----
+        services.TryAddScoped<IAuditLogger, NullAuditLogger>();
 
         // ---- Email notification — real implementation registered by Infrastructure.AddNotificationServices() ----
         // ---- Fallback stub kept for test projects that do not load the Infrastructure layer ----
