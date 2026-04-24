@@ -1,6 +1,6 @@
 namespace BrokerageMonitor.Domain.ValueObjects;
 
-public sealed class MarketSessionWindow
+public sealed class MarketSessionWindow : IEquatable<MarketSessionWindow>
 {
     public TimeOnly StartTime { get; }
     public TimeOnly EndTime { get; }
@@ -20,10 +20,10 @@ public sealed class MarketSessionWindow
     public bool IsWithinSession(DateTimeOffset dateTime) =>
         IsWithinSession(TimeOnly.FromTimeSpan(dateTime.TimeOfDay));
 
-    public override bool Equals(object? obj) =>
-        obj is MarketSessionWindow other &&
-        StartTime == other.StartTime &&
-        EndTime == other.EndTime;
+    public bool Equals(MarketSessionWindow? other) =>
+        other is not null && StartTime == other.StartTime && EndTime == other.EndTime;
+
+    public override bool Equals(object? obj) => Equals(obj as MarketSessionWindow);
 
     public override int GetHashCode() => HashCode.Combine(StartTime, EndTime);
 }

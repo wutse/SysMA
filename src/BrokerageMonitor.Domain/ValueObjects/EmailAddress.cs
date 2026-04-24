@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace BrokerageMonitor.Domain.ValueObjects;
 
-public sealed class EmailAddress
+public sealed class EmailAddress : IEquatable<EmailAddress>
 {
     private static readonly Regex EmailRegex = new(
         @"^[^@\s]+@[^@\s]+\.[^@\s]+$",
@@ -22,8 +22,9 @@ public sealed class EmailAddress
         Value = value.Trim().ToLowerInvariant();
     }
 
-    public override bool Equals(object? obj) =>
-        obj is EmailAddress other && Value == other.Value;
+    public bool Equals(EmailAddress? other) => other is not null && Value == other.Value;
+
+    public override bool Equals(object? obj) => Equals(obj as EmailAddress);
 
     public override int GetHashCode() => Value.GetHashCode();
 

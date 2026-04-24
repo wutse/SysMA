@@ -1,6 +1,6 @@
 namespace BrokerageMonitor.Domain.ValueObjects;
 
-public sealed class WatchedComponent
+public sealed class WatchedComponent : IEquatable<WatchedComponent>
 {
     public string ComponentId { get; }
     public ComponentType ComponentType { get; }
@@ -14,10 +14,10 @@ public sealed class WatchedComponent
         ComponentType = componentType;
     }
 
-    public override bool Equals(object? obj) =>
-        obj is WatchedComponent other &&
-        ComponentId == other.ComponentId &&
-        ComponentType == other.ComponentType;
+    public bool Equals(WatchedComponent? other) =>
+        other is not null && ComponentId == other.ComponentId && ComponentType == other.ComponentType;
+
+    public override bool Equals(object? obj) => Equals(obj as WatchedComponent);
 
     public override int GetHashCode() => HashCode.Combine(ComponentId, ComponentType);
 }

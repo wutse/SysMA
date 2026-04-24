@@ -5,7 +5,7 @@ namespace BrokerageMonitor.Domain.ValueObjects;
 /// BI-016: SuccessKeywords and FailureKeywords must not overlap.
 /// BI-016: On conflict, FailureKeywords take priority.
 /// </summary>
-public sealed class MailParsingRule
+public sealed class MailParsingRule : IEquatable<MailParsingRule>
 {
     public string FromPattern { get; }
     public string SubjectPattern { get; }
@@ -42,12 +42,14 @@ public sealed class MailParsingRule
         FailureKeywords = failureKeywords;
     }
 
-    public override bool Equals(object? obj) =>
-        obj is MailParsingRule other &&
+    public bool Equals(MailParsingRule? other) =>
+        other is not null &&
         FromPattern == other.FromPattern &&
         SubjectPattern == other.SubjectPattern &&
-        SuccessKeywords.SequenceEqual(other.SuccessKeywords, StringComparer.OrdinalIgnoreCase) &&
-        FailureKeywords.SequenceEqual(other.FailureKeywords, StringComparer.OrdinalIgnoreCase);
+        SuccessKeywords.SequenceEqual(other.SuccessKeywords) &&
+        FailureKeywords.SequenceEqual(other.FailureKeywords);
+
+    public override bool Equals(object? obj) => Equals(obj as MailParsingRule);
 
     public override int GetHashCode() => HashCode.Combine(FromPattern, SubjectPattern);
 }

@@ -7,7 +7,7 @@ public enum ScheduleType
     Cron
 }
 
-public sealed class HealthRuleSchedule
+public sealed class HealthRuleSchedule : IEquatable<HealthRuleSchedule>
 {
     public ScheduleType ScheduleType { get; }
     public string? CronExpression { get; }
@@ -89,11 +89,13 @@ public sealed class HealthRuleSchedule
         return false;
     }
 
-    public override bool Equals(object? obj) =>
-        obj is HealthRuleSchedule other &&
+    public bool Equals(HealthRuleSchedule? other) =>
+        other is not null &&
         ScheduleType == other.ScheduleType &&
         CronExpression == other.CronExpression &&
         DayOfWeek == other.DayOfWeek;
+
+    public override bool Equals(object? obj) => Equals(obj as HealthRuleSchedule);
 
     public override int GetHashCode() => HashCode.Combine(ScheduleType, CronExpression, DayOfWeek);
 }
