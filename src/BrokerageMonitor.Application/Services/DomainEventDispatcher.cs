@@ -1,5 +1,6 @@
 using BrokerageMonitor.Application.Notifications;
 using BrokerageMonitor.Domain.Events;
+using BrokerageMonitor.Domain.ValueObjects;
 using Microsoft.Extensions.Logging;
 
 namespace BrokerageMonitor.Application.Services;
@@ -16,6 +17,7 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
     private readonly IAggregateHealthEvaluationService _healthEvaluation;
     private readonly IRealtimeNotificationService _realtimeNotification;
     private readonly IAuditLogger _auditLogger;
+    private readonly IComponentStateCache _stateCache;
     private readonly ILogger<DomainEventDispatcher> _logger;
 
     public DomainEventDispatcher(
@@ -23,12 +25,14 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
         IAggregateHealthEvaluationService healthEvaluation,
         IRealtimeNotificationService realtimeNotification,
         IAuditLogger auditLogger,
+        IComponentStateCache stateCache,
         ILogger<DomainEventDispatcher> logger)
     {
         _alertEvaluation = alertEvaluation;
         _healthEvaluation = healthEvaluation;
         _realtimeNotification = realtimeNotification;
         _auditLogger = auditLogger;
+        _stateCache = stateCache;
         _logger = logger;
     }
 
@@ -105,12 +109,17 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
 
     private async Task DispatchComponentLostAsync(ComponentLost evt, CancellationToken ct)
     {
+        // Look up actual previous status from the in-memory cache so audit entries
+        // record the correct previous state instead of always logging Unknown.
+        var previousStatus = _stateCache.GetState(evt.ComponentId)?.Status
+                             ?? ComponentStatus.Unknown;
+
         // ComponentLost re-routes through AlertEvaluationService via a synthetic status change
         var syntheticChange = new ComponentStatusChanged(
             evt.ComponentId,
             evt.SystemId,
-            PreviousStatus: Domain.ValueObjects.ComponentStatus.Unknown, // actual previous unknown at this point
-            NewStatus: Domain.ValueObjects.ComponentStatus.Lost,
+            PreviousStatus: previousStatus,
+            NewStatus: ComponentStatus.Lost,
             evt.OccurredAt);
 
         await SafeInvokeAsync(
@@ -124,8 +133,8 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
         await SafeInvokeAsync(
             () => _auditLogger.LogStatusChangedAsync(
                 evt.SystemId, evt.ComponentId,
-                Domain.ValueObjects.ComponentStatus.Unknown,
-                Domain.ValueObjects.ComponentStatus.Lost,
+                previousStatus,
+                ComponentStatus.Lost,
                 evt.OccurredAt, ct),
             nameof(IAuditLogger));
     }

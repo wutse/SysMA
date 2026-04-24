@@ -1,5 +1,6 @@
 using BrokerageMonitor.Application.Notifications;
 using BrokerageMonitor.Application.Services;
+using BrokerageMonitor.Domain.Aggregates;
 using BrokerageMonitor.Domain.Events;
 using BrokerageMonitor.Domain.ValueObjects;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -79,6 +80,21 @@ internal sealed class FakeAuditLogger : IAuditLogger
         CancellationToken ct = default) => Task.CompletedTask;
 }
 
+internal sealed class FakeDispatcherStateCache : IComponentStateCache
+{
+    private readonly Dictionary<string, ComponentState> _cache = new();
+
+    public void Add(ComponentState state) => _cache[state.ComponentId] = state;
+
+    public ComponentState? GetState(string componentId) => _cache.GetValueOrDefault(componentId);
+    public void SetState(ComponentState state) => _cache[state.ComponentId] = state;
+    public IReadOnlyList<ComponentState> GetAllStates() => [.. _cache.Values];
+    public void LoadAll(IEnumerable<ComponentState> states)
+    {
+        foreach (var s in states) _cache[s.ComponentId] = s;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -95,15 +111,17 @@ public sealed class DomainEventDispatcherTests
              FakeAlertEvaluationService alert,
              FakeHealthEvaluationService health,
              FakeRealtimeNotificationService realtime,
-             FakeAuditLogger audit) CreateSut()
+             FakeAuditLogger audit,
+             FakeDispatcherStateCache cache) CreateSut()
     {
         var alert = new FakeAlertEvaluationService();
         var health = new FakeHealthEvaluationService();
         var realtime = new FakeRealtimeNotificationService();
         var audit = new FakeAuditLogger();
-        var sut = new DomainEventDispatcher(alert, health, realtime, audit,
+        var cache = new FakeDispatcherStateCache();
+        var sut = new DomainEventDispatcher(alert, health, realtime, audit, cache,
             NullLogger<DomainEventDispatcher>.Instance);
-        return (sut, alert, health, realtime, audit);
+        return (sut, alert, health, realtime, audit, cache);
     }
 
     // ── ComponentStatusChanged dispatch ──────────────────────────────────────
@@ -111,7 +129,7 @@ public sealed class DomainEventDispatcherTests
     [TestMethod]
     public async Task DispatchAsync_ComponentStatusChanged_CallsAllFourHandlers()
     {
-        var (sut, alert, health, realtime, audit) = CreateSut();
+        var (sut, alert, health, realtime, audit, _) = CreateSut();
         var evt = BuildStatusChanged();
 
         await sut.DispatchAsync(evt);
@@ -125,7 +143,7 @@ public sealed class DomainEventDispatcherTests
     [TestMethod]
     public async Task DispatchAsync_ComponentStatusChanged_PassesCorrectEventToHandlers()
     {
-        var (sut, alert, health, realtime, audit) = CreateSut();
+        var (sut, alert, health, realtime, audit, _) = CreateSut();
         var evt = BuildStatusChanged(ComponentStatus.Normal, ComponentStatus.Lost);
 
         await sut.DispatchAsync(evt);
@@ -140,7 +158,7 @@ public sealed class DomainEventDispatcherTests
     [TestMethod]
     public async Task DispatchAsync_AlertHandlerThrows_OtherHandlersStillCalled()
     {
-        var (sut, alert, health, realtime, audit) = CreateSut();
+        var (sut, alert, health, realtime, audit, _) = CreateSut();
         alert.ThrowOn = new InvalidOperationException("Simulated failure");
         var evt = BuildStatusChanged();
 
@@ -155,7 +173,7 @@ public sealed class DomainEventDispatcherTests
     [TestMethod]
     public async Task DispatchAsync_AlertHandlerThrows_DoesNotPropagateException()
     {
-        var (sut, alert, _, _, _) = CreateSut();
+        var (sut, alert, _, _, _, _) = CreateSut();
         alert.ThrowOn = new InvalidOperationException("Fatal");
 
         // Must not throw
@@ -167,7 +185,7 @@ public sealed class DomainEventDispatcherTests
     [TestMethod]
     public async Task DispatchAsync_ComponentLost_CallsAlertAndRealtimeAndAudit()
     {
-        var (sut, alert, _, realtime, audit) = CreateSut();
+        var (sut, alert, _, realtime, audit, _) = CreateSut();
         var evt = new ComponentLost("COMP-01", "SYS-01", DateTimeOffset.UtcNow);
 
         await sut.DispatchAsync(evt);
@@ -180,11 +198,35 @@ public sealed class DomainEventDispatcherTests
     [TestMethod]
     public async Task DispatchAsync_ComponentLost_SyntheticEventHasLostStatus()
     {
-        var (sut, alert, _, _, audit) = CreateSut();
+        var (sut, alert, _, _, audit, _) = CreateSut();
         await sut.DispatchAsync(new ComponentLost("COMP-01", "SYS-01", DateTimeOffset.UtcNow));
 
         Assert.AreEqual(ComponentStatus.Lost, alert.Received[0].NewStatus);
         Assert.AreEqual(ComponentStatus.Lost, audit.Logs[0].Curr);
+    }
+
+    [TestMethod]
+    public async Task DispatchAsync_ComponentLost_PreviousStatusReadFromCache()
+    {
+        var (sut, alert, _, _, audit, cache) = CreateSut();
+        var cachedState = new ComponentState("COMP-01");
+        cachedState.UpdateStatus(ComponentStatus.Normal, DateTimeOffset.UtcNow);
+        cache.Add(cachedState);
+
+        await sut.DispatchAsync(new ComponentLost("COMP-01", "SYS-01", DateTimeOffset.UtcNow));
+
+        Assert.AreEqual(ComponentStatus.Normal, alert.Received[0].PreviousStatus);
+        Assert.AreEqual(ComponentStatus.Normal, audit.Logs[0].Prev);
+    }
+
+    [TestMethod]
+    public async Task DispatchAsync_ComponentLost_PreviousStatusFallsBackToUnknownWhenNotCached()
+    {
+        var (sut, alert, _, _, audit, _) = CreateSut(); // cache empty
+        await sut.DispatchAsync(new ComponentLost("COMP-99", "SYS-01", DateTimeOffset.UtcNow));
+
+        Assert.AreEqual(ComponentStatus.Unknown, alert.Received[0].PreviousStatus);
+        Assert.AreEqual(ComponentStatus.Unknown, audit.Logs[0].Prev);
     }
 
     // ── Unknown event passthrough ────────────────────────────────────────────
@@ -192,7 +234,7 @@ public sealed class DomainEventDispatcherTests
     [TestMethod]
     public async Task DispatchAsync_UnhandledEventType_NoHandlersCalled()
     {
-        var (sut, alert, health, realtime, audit) = CreateSut();
+        var (sut, alert, health, realtime, audit, _) = CreateSut();
 
         // Pass an event type not handled by the dispatcher
         await sut.DispatchAsync(new AlertTriggered(Guid.NewGuid(), "SYS-01", "COMP-01",
@@ -209,7 +251,7 @@ public sealed class DomainEventDispatcherTests
     [TestMethod]
     public async Task DispatchAsync_NullEvent_ThrowsArgumentNullException()
     {
-        var (sut, _, _, _, _) = CreateSut();
+        var (sut, _, _, _, _, _) = CreateSut();
         await Assert.ThrowsExactlyAsync<ArgumentNullException>(
             () => sut.DispatchAsync<ComponentStatusChanged>(null!));
     }
