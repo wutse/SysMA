@@ -150,4 +150,93 @@ public sealed class DailyExecutionTests
         // Assert
         Assert.IsTrue(execution.IsTerminal);
     }
+
+    // ---- Rehydrate ----
+
+    [TestMethod]
+    public void Rehydrate_AllFields_RestoresExactValues()
+    {
+        // Arrange
+        var executionId    = Guid.NewGuid();
+        var definitionId   = Guid.NewGuid();
+        var createdAt      = new DateTimeOffset(2026, 4, 1, 0, 0, 0, TimeSpan.Zero);
+        var evaluatedAt    = new DateTimeOffset(2026, 4, 1, 14, 0, 0, TimeSpan.Zero);
+        var notifSentAt    = new DateTimeOffset(2026, 4, 1, 14, 1, 0, TimeSpan.Zero);
+        var date           = new DateOnly(2026, 4, 1);
+        string[] completed = ["COMP-01", "COMP-02"];
+        string[] failed    = ["COMP-03"];
+
+        // Act
+        var execution = DailyExecution.Rehydrate(
+            executionId, definitionId, "SYS-01", date,
+            DailyExecutionStatus.Failed,
+            createdAt, evaluatedAt,
+            completed, failed,
+            "missed window", notifSentAt);
+
+        // Assert
+        Assert.AreEqual(executionId,                      execution.ExecutionId);
+        Assert.AreEqual(definitionId,                     execution.DefinitionId);
+        Assert.AreEqual("SYS-01",                         execution.SystemId);
+        Assert.AreEqual(date,                             execution.ExecutionDate);
+        Assert.AreEqual(DailyExecutionStatus.Failed,      execution.Status);
+        Assert.AreEqual(createdAt,                        execution.CreatedAt);
+        Assert.AreEqual(evaluatedAt,                      execution.EvaluatedAt);
+        Assert.AreEqual(notifSentAt,                      execution.NotificationSentAt);
+        Assert.AreEqual("missed window",                  execution.MissedReason);
+        Assert.HasCount(2,  execution.CompletedComponents);
+        Assert.HasCount(1,  execution.FailedComponents);
+        Assert.Contains("COMP-01", execution.CompletedComponents);
+        Assert.Contains("COMP-03", execution.FailedComponents);
+    }
+
+    [TestMethod]
+    public void Rehydrate_NullCollections_ReturnsEmptyLists()
+    {
+        // Arrange
+        var createdAt = DateTimeOffset.UtcNow;
+
+        // Act
+        var execution = DailyExecution.Rehydrate(
+            Guid.NewGuid(), Guid.NewGuid(), "SYS-01", new DateOnly(2026, 4, 1),
+            DailyExecutionStatus.InProgress,
+            createdAt, null, null, null, null, null);
+
+        // Assert
+        Assert.IsEmpty(execution.CompletedComponents);
+        Assert.IsEmpty(execution.FailedComponents);
+        Assert.IsNull(execution.EvaluatedAt);
+        Assert.IsNull(execution.NotificationSentAt);
+        Assert.IsNull(execution.MissedReason);
+    }
+
+    [TestMethod]
+    public void Rehydrate_CreatedAt_DoesNotUseUtcNow()
+    {
+        // Arrange — a historical timestamp far in the past
+        var historicalCreatedAt = new DateTimeOffset(2025, 1, 1, 9, 0, 0, TimeSpan.Zero);
+
+        // Act
+        var execution = DailyExecution.Rehydrate(
+            Guid.NewGuid(), Guid.NewGuid(), "SYS-01", new DateOnly(2025, 1, 1),
+            DailyExecutionStatus.InProgress,
+            historicalCreatedAt, null, null, null, null, null);
+
+        // Assert — persisted timestamp must be preserved exactly
+        Assert.AreEqual(historicalCreatedAt, execution.CreatedAt);
+    }
+
+    [TestMethod]
+    public void Rehydrate_TerminalStatus_IsTerminalReturnsTrue()
+    {
+        // Arrange & Act
+        var execution = DailyExecution.Rehydrate(
+            Guid.NewGuid(), Guid.NewGuid(), "SYS-01", new DateOnly(2026, 4, 1),
+            DailyExecutionStatus.Success,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            null, null, null, null);
+
+        // Assert
+        Assert.IsTrue(execution.IsTerminal);
+    }
 }

@@ -104,4 +104,43 @@ public sealed class DailyExecution
     }
 
     public void RecordNotificationSent(DateTimeOffset sentAt) => NotificationSentAt = sentAt;
+
+    /// <summary>
+    /// Reconstitutes a <see cref="DailyExecution"/> from persisted data without triggering
+    /// domain validation or timestamp auto-assignment. For use by repository mapping only.
+    /// </summary>
+    public static DailyExecution Rehydrate(
+        Guid executionId,
+        Guid definitionId,
+        string systemId,
+        DateOnly executionDate,
+        DailyExecutionStatus status,
+        DateTimeOffset createdAt,
+        DateTimeOffset? evaluatedAt,
+        IEnumerable<string>? completedComponents,
+        IEnumerable<string>? failedComponents,
+        string? missedReason,
+        DateTimeOffset? notificationSentAt)
+    {
+        var execution = new DailyExecution
+        {
+            ExecutionId        = executionId,
+            DefinitionId       = definitionId,
+            SystemId           = systemId,
+            ExecutionDate      = executionDate,
+            Status             = status,
+            CreatedAt          = createdAt,
+            EvaluatedAt        = evaluatedAt,
+            MissedReason       = missedReason,
+            NotificationSentAt = notificationSentAt,
+        };
+
+        if (completedComponents is not null)
+            execution._completedComponents.AddRange(completedComponents);
+
+        if (failedComponents is not null)
+            execution._failedComponents.AddRange(failedComponents);
+
+        return execution;
+    }
 }

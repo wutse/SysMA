@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using BrokerageMonitor.Domain.Aggregates;
 using BrokerageMonitor.Domain.Repositories;
@@ -173,60 +172,31 @@ public sealed class DailyExecutionRepository : IDailyExecutionRepository
 
     private static DailyExecution MapToDomain(DailyExecutionRow row)
     {
-        var status = Enum.Parse<DailyExecutionStatus>(row.Status);
+        var status           = Enum.Parse<DailyExecutionStatus>(row.Status);
+        var createdAt        = DateTimeOffset.Parse(row.CreatedAt);
+        var evaluatedAt      = row.EvaluatedAt      is null ? (DateTimeOffset?)null : DateTimeOffset.Parse(row.EvaluatedAt);
+        var notificationSent = row.NotificationSentAt is null ? (DateTimeOffset?)null : DateTimeOffset.Parse(row.NotificationSentAt);
 
-        // Use InProgress initially so the public constructor doesn't reject the state;
-        // then fix all private fields via reflection for accurate DB-to-domain mapping.
-        var execution = new DailyExecution(
+        var completedComponents = row.CompletedComponentsJson is null
+            ? null
+            : JsonSerializer.Deserialize<string[]>(row.CompletedComponentsJson);
+
+        var failedComponents = row.FailedComponentsJson is null
+            ? null
+            : JsonSerializer.Deserialize<string[]>(row.FailedComponentsJson);
+
+        return DailyExecution.Rehydrate(
             Guid.Parse(row.ExecutionId),
             Guid.Parse(row.DefinitionId),
             row.SystemId,
             DateOnly.Parse(row.ExecutionDate),
-            DailyExecutionStatus.InProgress,
-            row.MissedReason);
-
-        // Restore timestamp fields that the constructor set to UtcNow
-        SetPrivateProperty(execution, "CreatedAt", DateTimeOffset.Parse(row.CreatedAt));
-
-        if (status != DailyExecutionStatus.InProgress)
-            SetPrivateProperty(execution, "Status", status);
-
-        if (row.EvaluatedAt is not null)
-            SetPrivateProperty(execution, "EvaluatedAt", (DateTimeOffset?)DateTimeOffset.Parse(row.EvaluatedAt));
-
-        if (row.NotificationSentAt is not null)
-            SetPrivateProperty(execution, "NotificationSentAt", (DateTimeOffset?)DateTimeOffset.Parse(row.NotificationSentAt));
-
-        if (row.CompletedComponentsJson is not null)
-        {
-            var items = JsonSerializer.Deserialize<string[]>(row.CompletedComponentsJson) ?? [];
-            AppendToPrivateList<string>(execution, "_completedComponents", items);
-        }
-
-        if (row.FailedComponentsJson is not null)
-        {
-            var items = JsonSerializer.Deserialize<string[]>(row.FailedComponentsJson) ?? [];
-            AppendToPrivateList<string>(execution, "_failedComponents", items);
-        }
-
-        return execution;
-    }
-
-    private static void SetPrivateProperty(object target, string propertyName, object? value)
-    {
-        var prop = target.GetType().GetProperty(propertyName,
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException($"Property '{propertyName}' not found.");
-        prop.SetValue(target, value);
-    }
-
-    private static void AppendToPrivateList<T>(object target, string fieldName, IEnumerable<T> items)
-    {
-        var field = target.GetType().GetField(fieldName,
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException($"Field '{fieldName}' not found.");
-        var list = (List<T>)field.GetValue(target)!;
-        list.AddRange(items);
+            status,
+            createdAt,
+            evaluatedAt,
+            completedComponents,
+            failedComponents,
+            row.MissedReason,
+            notificationSent);
     }
 
     private sealed record DailyExecutionRow(
