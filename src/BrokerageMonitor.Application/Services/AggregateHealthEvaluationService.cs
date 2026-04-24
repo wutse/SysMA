@@ -242,16 +242,11 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
         DateTimeOffset? notificationSentAt = null;
         var notificationType = TerminalStatusToNotificationType(terminalStatus);
 
-        // Attempt notifications when applicable
-        if (terminalStatus != DailyExecutionStatus.Exempted && definition.SendOnFailure && terminalStatus == DailyExecutionStatus.Failed)
+        // Send notifications when SendOnFailure = true and execution is not Exempted.
+        // Success and Failed are treated symmetrically — the flag controls whether any
+        // notification channel is triggered, not just the failure channel.
+        if (terminalStatus != DailyExecutionStatus.Exempted && definition.SendOnFailure)
         {
-            notificationSentAt = await SendNotificationsAsync(execution, definition, system, failedComponents, ct)
-                .ConfigureAwait(false);
-        }
-        else if (terminalStatus == DailyExecutionStatus.Success)
-        {
-            // Success notifications always sent if SendOnFailure is false (i.e., always send)
-            // or if SendOnFailure only suppresses on failure — send on Success regardless
             notificationSentAt = await SendNotificationsAsync(execution, definition, system, failedComponents, ct)
                 .ConfigureAwait(false);
         }
