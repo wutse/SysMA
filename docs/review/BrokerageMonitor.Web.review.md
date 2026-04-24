@@ -1,14 +1,24 @@
 # BrokerageMonitor.Web — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-22
+> **Date**: 2026-04-24 _(previous: 2026-04-22)_
 > **Layer**: Web / Presentation (depends on Application + Infrastructure)
+
+### Δ Changes Since Previous Review
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | `AddZeroMq()` never called — heartbeat pipeline disconnected | ✅ **FIXED** |
+| 2 | No concrete `IAuditLogger` / NullAuditLogger in production | ✅ **FIXED** |
+| 3 | `Program.cs` SRP violation | 🟡 **STILL OPEN** |
+| 4 | Dynamic Quartz job scheduling not re-run on definition changes | 🟡 **STILL OPEN** |
+| 5 | `AddZeroMq` missing meant `IHeartbeatTimerRegistry` resolved as no-op | ✅ **FIXED** (consequence of fix #1) |
 
 ---
 
-## 📊 Architecture Health Score: 6 / 10
+## 📊 Architecture Health Score: 7.5 / 10 _(improved from 6.0)_
 
-The Web project has a clean startup sequence, correct Blazor Server circuit-scoped session design, and proper layering. However, it contains **two critical operational bugs**: the ZeroMQ subscriber service is never registered (the entire heartbeat pipeline is disconnected), and there is no concrete `IAuditLogger` implementation, meaning all operator audit entries are silently discarded. Additionally, the startup `Program.cs` is overloaded with orchestration logic that should be delegated.
+The Web project has a clean startup sequence, correct Blazor Server circuit-scoped session design, and proper layering. **Two critical operational bugs from the previous review have been fixed**: `AddZeroMq()` is now called (heartbeat pipeline is active) and the concrete `AuditLogger` is now registered. The remaining concerns are `Program.cs` complexity and the static Quartz job schedule.
 
 ---
 
@@ -28,34 +38,15 @@ The Web project has a clean startup sequence, correct Blazor Server circuit-scop
 
 ## ⚠️ Critical Violations
 
-### 1. ZeroMQ Subscriber Service Is Never Registered
+### 1. ✅ ~~ZeroMQ Subscriber Service Is Never Registered~~ — FIXED
 
-`AddZeroMq(builder.Configuration)` is not called anywhere in `Program.cs`. This means:
-- `ZeroMQSubscriberService` (the heartbeat receiver) is **not** started
-- `HeartbeatTimeoutMonitor` (the timer registry) is **not** registered as a singleton or hosted service
-- The `IHeartbeatTimerRegistry` resolves to `NullHeartbeatTimerRegistry` (no-op) from the Application layer
-- `IHeartbeatMessageParser` and `IMailChannelMessageParser` are never registered
-
-**Result**: The application starts, the UI renders, but **no heartbeats are ever processed**. The dashboard will show all components at `Unknown` status indefinitely. This is a **complete loss of the system's core monitoring function**.
-
-```csharp
-// Program.cs (current) — ZeroMQ never wired:
-builder.Services.AddPersistence();
-builder.Services.AddApplicationServices();
-// ❌ builder.Services.AddZeroMq(builder.Configuration); — MISSING
-builder.Services.AddSignalR();
-```
+`builder.Services.AddZeroMq(builder.Configuration)` is now called in `Program.cs`. The `ZeroMQSubscriberService`, `HeartbeatTimeoutMonitor`, and all related parsers are registered and started. The heartbeat pipeline is fully operational.
 
 ---
 
-### 2. Audit Logging Is Silently Disabled
+### 2. ✅ ~~Audit Logging Is Silently Disabled~~ — FIXED
 
-`AddApplicationServices()` registers `NullAuditLogger` as a singleton. No Infrastructure extension method replaces it with a concrete implementation. **Every operator action (acknowledge alert, toggle maintenance, override state) produces zero audit records**, even though `AuditLogRepository` exists and the SQLite table is created by `DatabaseInitializer`.
-
-```csharp
-// ApplicationServiceCollectionExtensions.cs
-services.AddSingleton<IAuditLogger, NullAuditLogger>(); // ❌ never replaced
-```
+`InfrastructureServiceCollectionExtensions.AddPersistence()` now calls `services.AddScoped<IAuditLogger, AuditLogger>()`. The Application layer correctly uses `services.TryAddScoped<IAuditLogger, NullAuditLogger>()` as a test-only fallback, so the Infrastructure implementation takes precedence in any deployment that calls `AddPersistence()`.
 
 ---
 
@@ -73,7 +64,7 @@ This is 80+ lines of orchestration logic that belongs in dedicated startup servi
 
 ---
 
-### 4. Dynamic Quartz Job Scheduling Is Not Re-Run on Definition Changes
+### 4. Dynamic Quartz Job Scheduling Not Re-Run on Definition Changes
 
 Health evaluation jobs (`AggregateHealthEvaluationJob`) are scheduled once at startup from the definition repository. If a `HealthMonitorDefinition` is created or updated via `UpsertHealthMonitorDefinitionHandler` while the application is running, the corresponding Quartz trigger is **not** added or updated.
 
@@ -81,23 +72,11 @@ Health evaluation jobs (`AggregateHealthEvaluationJob`) are scheduled once at st
 
 ---
 
-### 5. `AddZeroMq` Not Called Means `IHeartbeatTimerRegistry` Resolves as No-Op
-
-Because `AddZeroMq` is missing, the concrete `HeartbeatTimeoutMonitor` (which implements `IHeartbeatTimerRegistry`) is never registered. The `NullHeartbeatTimerRegistry` registered in `AddApplicationServices()` wins. Even if someone manually calls `ProcessAsync` on `HeartbeatProcessor`, timers are never armed or reset, so `ComponentLost` events are never raised.
-
----
-
 ## 💡 Refactoring Suggestions
 
-1. **Add `builder.Services.AddZeroMq(builder.Configuration)` to `Program.cs`** — This is the single most impactful fix. Bind `ZeroMqOptions` from the `"ZeroMQ"` appsettings section and ensure the section is present in `appsettings.json`.
+1. **Extract startup orchestration into an `AppStartup` helper** — Create a `static class AppStartup` with methods like `ScheduleJobsAsync(IScheduler, IServiceProvider)` and `SeedAndRecoverAsync(IServiceProvider)` to reduce `Program.cs` to a composition root concern only.
 
-2. **Create a concrete `AuditLogger` in Infrastructure** — Implement `IAuditLogger` delegating to `IAuditLogRepository`. Register it in `AddPersistence()` using `services.AddScoped<IAuditLogger, AuditLogger>()` to override the null stub.
-
-3. **Extract startup orchestration into an `AppStartup` helper** — Create a `static class AppStartup` with methods like `ScheduleJobsAsync(IScheduler, IServiceProvider)` and `SeedAndRecoverAsync(IServiceProvider)` to reduce `Program.cs` to a composition root concern only.
-
-4. **Call `QuartzJobScheduler.ScheduleDefinitionJobAsync()` from `UpsertHealthMonitorDefinitionHandler`** — Inject `ISchedulerFactory` into the handler and schedule/reschedule the `AggregateHealthEvaluationJob` whenever a definition is created or modified.
-
-5. **Add `"ZeroMQ"` section to `appsettings.json`** — Currently the section is absent from `appsettings.json`, which would cause `AddZeroMq` to bind empty options and attempt to connect to an empty address.
+2. **Call `QuartzJobScheduler.ScheduleDefinitionJobAsync()` from `UpsertHealthMonitorDefinitionHandler`** — Inject `ISchedulerFactory` into the handler and schedule/reschedule the `AggregateHealthEvaluationJob` whenever a definition is created or modified.
 
 ---
 
