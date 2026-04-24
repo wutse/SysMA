@@ -41,6 +41,9 @@ internal sealed class AckAlert_AlertRepo : IAlertRecordRepository
     public Task<bool> HasUnacknowledgedAlertAsync(string systemId, CancellationToken ct = default)
         => Task.FromResult(false);
 
+    public Task<IReadOnlySet<string>> GetSystemsWithUnacknowledgedAlertAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlySet<string>>(new HashSet<string>());
+
     public Task AddAsync(AlertRecord alert, CancellationToken ct = default)
         => Task.CompletedTask;
 

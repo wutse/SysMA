@@ -32,6 +32,19 @@ public sealed class AlertRecordRepository : IAlertRecordRepository
         return count > 0;
     }
 
+    public async Task<IReadOnlySet<string>> GetSystemsWithUnacknowledgedAlertAsync(
+        CancellationToken ct = default)
+    {
+        using var conn = _factory.CreateConnection();
+        const string sql = """
+            SELECT DISTINCT SystemId FROM AlertRecords
+            WHERE IsGlobalFlagActive = 1
+            """;
+        var systemIds = await conn.QueryAsync<string>(
+            new CommandDefinition(sql, cancellationToken: ct));
+        return systemIds.ToHashSet();
+    }
+
     public async Task AddAsync(AlertRecord alert, CancellationToken ct = default)
     {
         using var conn = _factory.CreateConnection();

@@ -49,6 +49,12 @@ internal sealed class AlertEval_AlertRepo : IAlertRecordRepository
     public Task<bool> HasUnacknowledgedAlertAsync(string systemId, CancellationToken ct = default)
         => Task.FromResult(_hasUnacknowledged);
 
+    public Task<IReadOnlySet<string>> GetSystemsWithUnacknowledgedAlertAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlySet<string>>(
+            _store.Where(a => !a.IsAcknowledged)
+                  .Select(a => a.SystemId)
+                  .ToHashSet());
+
     public Task AddAsync(AlertRecord alert, CancellationToken ct = default)
     {
         _store.Add(alert);
