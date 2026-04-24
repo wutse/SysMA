@@ -48,6 +48,10 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
                 await DispatchComponentLostAsync(e, ct);
                 break;
 
+            case ComponentStateOverridden e:
+                await DispatchComponentStateOverriddenAsync(e, ct);
+                break;
+
             // Other events are intentionally unhandled at this layer;
             // infrastructure services (HeartbeatTimeoutMonitor, SignalR) handle them directly.
             default:
@@ -80,6 +84,23 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
                 evt.PreviousStatus, evt.NewStatus,
                 evt.OccurredAt, ct),
             nameof(IAuditLogger));
+    }
+
+    private async Task DispatchComponentStateOverriddenAsync(
+        ComponentStateOverridden evt, CancellationToken ct)
+    {
+        // Route through AlertEvaluationService via a synthetic ComponentStatusChanged
+        // so active alerts are cleared and new ones are raised for the overridden state.
+        var syntheticChange = new ComponentStatusChanged(
+            evt.ComponentId,
+            evt.SystemId,
+            PreviousStatus: evt.PreviousStatus,
+            NewStatus: evt.NewStatus,
+            evt.OccurredAt);
+
+        await SafeInvokeAsync(
+            () => _alertEvaluation.EvaluateAsync(syntheticChange, ct),
+            nameof(IAlertEvaluationService));
     }
 
     private async Task DispatchComponentLostAsync(ComponentLost evt, CancellationToken ct)

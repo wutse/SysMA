@@ -1,4 +1,5 @@
 using BrokerageMonitor.Application.Notifications;
+using BrokerageMonitor.Application.Services;
 using BrokerageMonitor.Application.UseCases.Maintenance;
 using BrokerageMonitor.Domain.Aggregates;
 using BrokerageMonitor.Domain.Events;
@@ -81,6 +82,26 @@ internal sealed class ToggleMaint_StateRepo : IComponentStateRepository
     }
 }
 
+internal sealed class ToggleMaint_StateCache : IComponentStateCache
+{
+    private readonly Dictionary<string, ComponentState> _cache = new();
+    public List<ComponentState> SetStateCalls { get; } = new();
+
+    public ComponentState? GetState(string componentId) => _cache.GetValueOrDefault(componentId);
+
+    public void SetState(ComponentState state)
+    {
+        SetStateCalls.Add(state);
+        _cache[state.ComponentId] = state;
+    }
+
+    public IReadOnlyList<ComponentState> GetAllStates() => [.. _cache.Values];
+    public void LoadAll(IEnumerable<ComponentState> states)
+    {
+        foreach (var s in states) _cache[s.ComponentId] = s;
+    }
+}
+
 internal sealed class ToggleMaint_AuditLogger : IAuditLogger
 {
     public List<(string SystemId, string ActionType, string OperatorName)> Logs { get; } = new();
@@ -152,6 +173,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
     private readonly ToggleMaint_SystemRepo _systemRepo = new();
     private readonly ToggleMaint_ComponentRepo _componentRepo = new();
     private readonly ToggleMaint_StateRepo _stateRepo = new();
+    private readonly ToggleMaint_StateCache _stateCache = new();
     private readonly ToggleMaint_AuditLogger _auditLogger = new();
     private readonly ToggleMaint_RealtimeService _realtimeService = new();
     private readonly ToggleMaintenanceModeHandler _sut;
@@ -162,6 +184,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
             _systemRepo,
             _componentRepo,
             _stateRepo,
+            _stateCache,
             _auditLogger,
             _realtimeService,
             NullLogger<ToggleMaintenanceModeHandler>.Instance);
@@ -347,5 +370,30 @@ public sealed class ToggleMaintenanceModeHandlerTests
         var comp2State = _stateRepo.UpsertedStates.FirstOrDefault(s => s.ComponentId == "COMP-2");
         Assert.IsNotNull(comp2State);
         Assert.AreEqual(ComponentStatus.Maintenance, comp2State!.Status);
+    }
+
+    [TestMethod]
+    public async Task HandleAsync_Activate_StateCacheUpdatedForAllComponents()
+    {
+        _componentRepo.Add(ToggleMaint_Builder.Component(id: "COMP-2"));
+        _stateRepo.Add(ToggleMaint_Builder.State("COMP-2"));
+
+        var command = new ToggleMaintenanceModeCommand("SYS-1", true, "Alice");
+
+        await _sut.HandleAsync(command);
+
+        Assert.AreEqual(2, _stateCache.SetStateCalls.Count);
+        Assert.IsTrue(_stateCache.SetStateCalls.All(s => s.Status == ComponentStatus.Maintenance));
+    }
+
+    [TestMethod]
+    public async Task HandleAsync_Deactivate_StateCacheUpdatedToUnknown()
+    {
+        var command = new ToggleMaintenanceModeCommand("SYS-1", false, "Alice");
+
+        await _sut.HandleAsync(command);
+
+        Assert.AreEqual(1, _stateCache.SetStateCalls.Count);
+        Assert.AreEqual(ComponentStatus.Unknown, _stateCache.SetStateCalls[0].Status);
     }
 }

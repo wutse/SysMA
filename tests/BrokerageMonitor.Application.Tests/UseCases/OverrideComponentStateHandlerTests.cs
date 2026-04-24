@@ -58,6 +58,26 @@ internal sealed class Override_StateRepo : IComponentStateRepository
     }
 }
 
+internal sealed class Override_StateCache : IComponentStateCache
+{
+    private readonly Dictionary<string, ComponentState> _cache = new();
+    public List<ComponentState> SetStateCalls { get; } = new();
+
+    public ComponentState? GetState(string componentId) => _cache.GetValueOrDefault(componentId);
+
+    public void SetState(ComponentState state)
+    {
+        SetStateCalls.Add(state);
+        _cache[state.ComponentId] = state;
+    }
+
+    public IReadOnlyList<ComponentState> GetAllStates() => [.. _cache.Values];
+    public void LoadAll(IEnumerable<ComponentState> states)
+    {
+        foreach (var s in states) _cache[s.ComponentId] = s;
+    }
+}
+
 internal sealed class Override_EventDispatcher : IDomainEventDispatcher
 {
     public List<IDomainEvent> DispatchedEvents { get; } = new();
@@ -121,6 +141,7 @@ public sealed class OverrideComponentStateHandlerTests
 {
     private readonly Override_ComponentRepo _componentRepo = new();
     private readonly Override_StateRepo _stateRepo = new();
+    private readonly Override_StateCache _stateCache = new();
     private readonly Override_EventDispatcher _dispatcher = new();
     private readonly Override_AuditLogger _auditLogger = new();
     private readonly Override_RealtimeService _realtimeService = new();
@@ -131,6 +152,7 @@ public sealed class OverrideComponentStateHandlerTests
         _sut = new OverrideComponentStateHandler(
             _componentRepo,
             _stateRepo,
+            _stateCache,
             _dispatcher,
             _auditLogger,
             _realtimeService,
@@ -230,6 +252,7 @@ public sealed class OverrideComponentStateHandlerTests
         Assert.IsNotNull(evt);
         Assert.AreEqual("COMP-1", evt!.ComponentId);
         Assert.AreEqual("SYS-1", evt.SystemId);
+        Assert.AreEqual(ComponentStatus.Unknown, evt.PreviousStatus);
         Assert.AreEqual(ComponentStatus.Error, evt.NewStatus);
         Assert.AreEqual("Alice", evt.OperatorName);
         Assert.AreEqual("Force error", evt.Reason);
@@ -288,5 +311,16 @@ public sealed class OverrideComponentStateHandlerTests
         var upserted = _stateRepo.UpsertedStates.FirstOrDefault(s => s.ComponentId == "COMP-2");
         Assert.IsNotNull(upserted);
         Assert.AreEqual(ComponentStatus.Warning, upserted!.Status);
+    }
+
+    [TestMethod]
+    public async Task HandleAsync_ValidCommand_StateCacheUpdatedWithNewStatus()
+    {
+        var command = new OverrideComponentStateCommand("SYS-1", "COMP-1", ComponentStatus.Error, "Alice", "reason");
+
+        await _sut.HandleAsync(command);
+
+        Assert.AreEqual(1, _stateCache.SetStateCalls.Count);
+        Assert.AreEqual(ComponentStatus.Error, _stateCache.SetStateCalls[0].Status);
     }
 }
