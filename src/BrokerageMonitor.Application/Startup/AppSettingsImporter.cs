@@ -73,8 +73,8 @@ public sealed class AppSettingsImporter
 
     private async Task ImportSystemAsync(SystemConfig cfg, CancellationToken ct)
     {
-        var startTime = TimeOnly.Parse(cfg.MarketSessionStart);
-        var endTime = TimeOnly.Parse(cfg.MarketSessionEnd);
+        var startTime = TimeOnly.Parse(cfg.MarketSessionStart, System.Globalization.CultureInfo.InvariantCulture);
+        var endTime = TimeOnly.Parse(cfg.MarketSessionEnd, System.Globalization.CultureInfo.InvariantCulture);
 
         var sysCmd = new UpsertMonitoredSystemCommand(
             cfg.SystemId,
