@@ -32,6 +32,9 @@ try
     // Register Application-layer services (handlers, state cache, broadcaster)
     builder.Services.AddApplicationServices();
 
+    // Register ZeroMQ subscriber, heartbeat parser and timeout monitor (US-001)
+    builder.Services.AddZeroMq(builder.Configuration);
+
     // Register startup recovery service (US-030, US-052)
     builder.Services.AddScoped<IStartupRecoveryService, StationStartupRecoveryService>();
 
