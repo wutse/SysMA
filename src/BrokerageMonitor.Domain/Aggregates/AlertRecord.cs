@@ -63,6 +63,10 @@ public sealed class AlertRecord
         if (string.IsNullOrWhiteSpace(operatorName))
             throw new ArgumentException("OperatorName is required to acknowledge an alert (BI-009).", nameof(operatorName));
 
+        if (IsAcknowledged)
+            throw new InvalidOperationException(
+                $"Alert '{AlertId}' has already been acknowledged by '{AcknowledgedBy}' and cannot be overwritten.");
+
         AcknowledgedBy = operatorName;
         AcknowledgedAt = acknowledgedAt;
         IsGlobalFlagActive = false;
