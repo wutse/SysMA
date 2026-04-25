@@ -77,60 +77,8 @@ try
     // Map SignalR hub
     app.MapHub<MonitorHub>("/hubs/monitor");
 
-    // Schedule SmokeTestJob (startup verification — runs once at 01:00 each day)
-    var scheduler = await app.Services
-        .GetRequiredService<ISchedulerFactory>()
-        .GetScheduler();
-    await QuartzJobScheduler.ScheduleCronJobAsync<SmokeTestJob>(
-        scheduler,
-        cronExpression: "0 0 1 * * ?");
-
-    // Schedule DailyExecutionCreatorJob — runs daily at 05:30 (US-048)
-    await QuartzJobScheduler.ScheduleCronJobAsync<DailyExecutionCreatorJob>(
-        scheduler,
-        cronExpression: "0 30 5 * * ?");
-
-    // Schedule AggregateHealthEvaluationJob — dynamically per definition at startup (US-051)
-    // Jobs per definition are scheduled after DB init, inside the startup scope below.
-
-    // Run database initialisation (WAL pragma + schema bootstrap)
-    await app.Services
-        .GetRequiredService<DatabaseInitializer>()
-        .InitialiseAsync();
-
-    // Seed initial systems from appsettings.json if DB is empty (US-045)
-    using (var scope = app.Services.CreateScope())
-    {
-        await scope.ServiceProvider
-            .GetRequiredService<AppSettingsImporter>()
-            .ImportIfEmptyAsync();
-    }
-
-    // Schedule AggregateHealthEvaluationJob per definition (US-051)
-    using (var scope = app.Services.CreateScope())
-    {
-        var definitionRepo = scope.ServiceProvider
-            .GetRequiredService<BrokerageMonitor.Domain.Repositories.IHealthMonitorDefinitionRepository>();
-        var definitions = await definitionRepo.GetAllActiveAsync();
-        foreach (var def in definitions)
-        {
-            var jobData = new JobDataMap
-            {
-                [AggregateHealthEvaluationJob.DefinitionIdKey] = def.DefinitionId.ToString()
-            };
-            var cron = $"0 {def.DeadlineTime.Minute} {def.DeadlineTime.Hour} * * ?";
-            await QuartzJobScheduler.ScheduleCronJobAsync<AggregateHealthEvaluationJob>(
-                scheduler, cron, $"AggregateHealthEval-{def.DefinitionId}", jobData);
-        }
-    }
-
-    // Station startup recovery — restore component states and recover DailyExecutions (US-030, US-052)
-    using (var scope = app.Services.CreateScope())
-    {
-        await scope.ServiceProvider
-            .GetRequiredService<IStartupRecoveryService>()
-            .RecoverAsync();
-    }
+    // Run all startup orchestration steps (DB init, seeding, job scheduling, recovery)
+    await new WebApplicationStartup(app).InitialiseAsync();
 
     app.Run();
 }

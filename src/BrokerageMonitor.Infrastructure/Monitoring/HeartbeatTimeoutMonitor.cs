@@ -40,6 +40,7 @@ public sealed class HeartbeatTimeoutMonitor : BackgroundService, IHeartbeatTimer
     private readonly ConcurrentDictionary<string, TimerEntry> _timers = new(StringComparer.Ordinal);
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<HeartbeatTimeoutMonitor> _logger;
+    private CancellationToken _stoppingToken;
 
     public HeartbeatTimeoutMonitor(
         IServiceScopeFactory scopeFactory,
@@ -114,6 +115,7 @@ public sealed class HeartbeatTimeoutMonitor : BackgroundService, IHeartbeatTimer
     /// </summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _stoppingToken = stoppingToken;
         await LoadComponentsAsync(stoppingToken).ConfigureAwait(false);
 
         // Keep the service alive until the host requests a stop.
@@ -169,8 +171,11 @@ public sealed class HeartbeatTimeoutMonitor : BackgroundService, IHeartbeatTimer
             return;
         }
 
-        // Fire-and-forget: raise ComponentLost asynchronously without blocking the timer thread.
-        _ = RaiseComponentLostAsync(entry, CancellationToken.None);
+        // Timer callback is synchronous; schedule the async work on the thread pool
+        // using the host's stopping token so in-flight work respects graceful shutdown.
+        _ = Task.Run(
+            () => RaiseComponentLostAsync(entry, _stoppingToken),
+            _stoppingToken);
     }
 
     private async Task RaiseComponentLostAsync(TimerEntry entry, CancellationToken ct)

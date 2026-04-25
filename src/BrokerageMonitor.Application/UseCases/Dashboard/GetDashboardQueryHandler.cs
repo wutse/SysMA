@@ -39,20 +39,30 @@ public sealed class GetDashboardQueryHandler
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var systems = await _systemRepository.GetAllActiveAsync(ct);
+        // Batch load: 3 queries total instead of 2N+1
+        var systems     = await _systemRepository.GetAllActiveAsync(ct);
+        var allComponents = await _componentRepository.GetAllActiveAsync(ct);
+        var alertSystems  = await _alertRepository.GetSystemsWithUnacknowledgedAlertAsync(ct);
+
+        // Group components by system for O(1) lookups below
+        var componentsBySystem = allComponents
+            .GroupBy(c => c.SystemId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
         var result = new List<SystemSummaryDto>(systems.Count);
 
         foreach (var system in systems)
         {
-            var components = await _componentRepository.GetBySystemIdAsync(system.SystemId, ct);
-            var activeComponents = components.Where(c => c.IsActive).ToList();
+            var components = componentsBySystem.TryGetValue(system.SystemId, out var list)
+                ? list.Where(c => c.IsActive).ToList()
+                : [];
 
-            var componentDtos = BuildComponentDtos(activeComponents);
+            var componentDtos = BuildComponentDtos(components);
 
             var rolledUpStatus = _rollupService.ComputeSystemStatus(
                 componentDtos.Select(c => c.Status));
 
-            bool hasAlert = await _alertRepository.HasUnacknowledgedAlertAsync(system.SystemId, ct);
+            bool hasAlert = alertSystems.Contains(system.SystemId);
 
             result.Add(new SystemSummaryDto(
                 system.SystemId,

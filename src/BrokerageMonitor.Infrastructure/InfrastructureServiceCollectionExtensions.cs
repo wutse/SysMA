@@ -5,6 +5,7 @@ using BrokerageMonitor.Infrastructure.Monitoring;
 using BrokerageMonitor.Infrastructure.Notifications;
 using BrokerageMonitor.Infrastructure.Persistence;
 using BrokerageMonitor.Infrastructure.Persistence.Repositories;
+using BrokerageMonitor.Infrastructure.Scheduling;
 using BrokerageMonitor.Infrastructure.ZeroMQ;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -38,6 +39,9 @@ public static class InfrastructureServiceCollectionExtensions
 
         // Concrete IAuditLogger — delegates to IAuditLogRepository (replaces NullAuditLogger stub)
         services.AddScoped<IAuditLogger, AuditLogger>();
+
+        // Quartz-backed job scheduler for HealthMonitorDefinition evaluation jobs
+        services.AddScoped<IHealthJobScheduler, QuartzHealthJobScheduler>();
 
         return services;
     }

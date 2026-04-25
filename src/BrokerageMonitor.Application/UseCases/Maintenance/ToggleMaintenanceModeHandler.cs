@@ -1,4 +1,5 @@
 using BrokerageMonitor.Application.Notifications;
+using BrokerageMonitor.Application.Services;
 using BrokerageMonitor.Domain.Aggregates;
 using BrokerageMonitor.Domain.Events;
 using BrokerageMonitor.Domain.Repositories;
@@ -28,6 +29,7 @@ public sealed class ToggleMaintenanceModeHandler
     private readonly IMonitoredSystemRepository _systemRepository;
     private readonly IMonitoredComponentRepository _componentRepository;
     private readonly IComponentStateRepository _stateRepository;
+    private readonly IComponentStateCache _stateCache;
     private readonly IAuditLogger _auditLogger;
     private readonly IRealtimeNotificationService _realtimeNotification;
     private readonly ILogger<ToggleMaintenanceModeHandler> _logger;
@@ -36,6 +38,7 @@ public sealed class ToggleMaintenanceModeHandler
         IMonitoredSystemRepository systemRepository,
         IMonitoredComponentRepository componentRepository,
         IComponentStateRepository stateRepository,
+        IComponentStateCache stateCache,
         IAuditLogger auditLogger,
         IRealtimeNotificationService realtimeNotification,
         ILogger<ToggleMaintenanceModeHandler> logger)
@@ -43,6 +46,7 @@ public sealed class ToggleMaintenanceModeHandler
         _systemRepository = systemRepository;
         _componentRepository = componentRepository;
         _stateRepository = stateRepository;
+        _stateCache = stateCache;
         _auditLogger = auditLogger;
         _realtimeNotification = realtimeNotification;
         _logger = logger;
@@ -95,6 +99,7 @@ public sealed class ToggleMaintenanceModeHandler
 
             state.UpdateStatus(targetStatus, now);
             await _stateRepository.UpsertAsync(state, ct);
+            _stateCache.SetState(state);
         }
 
         _logger.LogInformation(

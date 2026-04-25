@@ -1,4 +1,4 @@
-namespace BrokerageMonitor.Domain.Repositories;
+namespace BrokerageMonitor.Domain.ReadModels;
 
 /// <summary>
 /// Immutable audit log entry. Written once, never modified.

@@ -26,6 +26,7 @@ public sealed class MailRelayWorker : BackgroundService
     private readonly IOutlookMailReader _mailReader;
     private readonly IZeroMQMailPublisher _publisher;
     private readonly TimeSpan _pollInterval;
+    private readonly int _maxBodyCharacters;
     private readonly ILogger<MailRelayWorker> _logger;
 
     public MailRelayWorker(
@@ -39,6 +40,7 @@ public sealed class MailRelayWorker : BackgroundService
         _publisher = publisher;
         _pollInterval = TimeSpan.FromSeconds(
             Math.Max(1, options.Value.PollIntervalSeconds));
+        _maxBodyCharacters = options.Value.MaxBodyCharacters;
         _logger = logger;
     }
 
@@ -89,7 +91,7 @@ public sealed class MailRelayWorker : BackgroundService
                     MessageType: "MailRelay",
                     From: mail.From,
                     Subject: mail.Subject,
-                    Body: mail.Body,
+                    Body: TruncateBody(mail.Body),
                     ReceivedAt: mail.ReceivedAt);
 
                 var json = JsonSerializer.Serialize(message, JsonOptions);
@@ -113,5 +115,17 @@ public sealed class MailRelayWorker : BackgroundService
         }
 
         return Task.CompletedTask;
+    }
+
+    private string TruncateBody(string body)
+    {
+        if (_maxBodyCharacters <= 0 || body.Length <= _maxBodyCharacters)
+            return body;
+
+        _logger.LogWarning(
+            "MailRelayWorker: email body ({Length} chars) exceeds MaxBodyCharacters ({Max}); truncating.",
+            body.Length, _maxBodyCharacters);
+
+        return body[.._maxBodyCharacters];
     }
 }

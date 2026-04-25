@@ -80,28 +80,26 @@ public sealed class ComponentStateRepository : IComponentStateRepository
 
     private static ComponentState MapToDomain(ComponentStateRow row)
     {
-        var state = new ComponentState(row.ComponentId);
-        state.UpdateStatus(
-            Enum.Parse<ComponentStatus>(row.Status),
-            DateTimeOffset.Parse(row.LastStatusChangedAt));
-
-        if (row.LastHeartbeatAt is not null)
-            state.RecordHeartbeat(DateTimeOffset.Parse(row.LastHeartbeatAt));
+        IEnumerable<SubIndicator>? subIndicators = null;
 
         if (row.SubIndicatorsJson is not null)
         {
             var dtos = JsonSerializer.Deserialize<SubIndicatorDto[]>(row.SubIndicatorsJson) ?? [];
-            var indicators = dtos.Select(d =>
+            subIndicators = dtos.Select(d =>
             {
                 MetricValue? metric = d.Metric is null
                     ? null
                     : new MetricValue(d.Metric.Label, d.Metric.Value);
                 return new SubIndicator(d.Name, Enum.Parse<SubIndicatorStatus>(d.Status), metric);
             });
-            state.SetSubIndicators(indicators);
         }
 
-        return state;
+        return ComponentState.Rehydrate(
+            row.ComponentId,
+            Enum.Parse<ComponentStatus>(row.Status),
+            DateTimeOffset.Parse(row.LastStatusChangedAt),
+            row.LastHeartbeatAt is null ? null : DateTimeOffset.Parse(row.LastHeartbeatAt),
+            subIndicators);
     }
 
     private sealed record ComponentStateRow(

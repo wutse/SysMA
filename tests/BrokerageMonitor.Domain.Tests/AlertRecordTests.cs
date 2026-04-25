@@ -50,6 +50,20 @@ public sealed class AlertRecordTests
     }
 
     [TestMethod]
+    public void Acknowledge_AlreadyAcknowledged_ThrowsInvalidOperationException()
+    {
+        // Arrange — BI-009 guard against silent overwrite
+        var alert = new AlertRecord(
+            Guid.NewGuid(), "SYS-01", "COMP-01",
+            ComponentStatus.Error, DateTimeOffset.UtcNow);
+        alert.Acknowledge("operator1", DateTimeOffset.UtcNow);
+
+        // Act & Assert
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => alert.Acknowledge("operator2", DateTimeOffset.UtcNow));
+    }
+
+    [TestMethod]
     public void Constructor_EmptyAlertId_ThrowsArgumentException()
     {
         // Act & Assert

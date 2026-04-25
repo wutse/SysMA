@@ -1,4 +1,5 @@
 using BrokerageMonitor.Application.Notifications;
+using BrokerageMonitor.Domain.ReadModels;
 using BrokerageMonitor.Domain.Repositories;
 using BrokerageMonitor.Domain.ValueObjects;
 

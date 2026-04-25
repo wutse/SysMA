@@ -1,6 +1,6 @@
 namespace BrokerageMonitor.Domain.ValueObjects;
 
-public sealed class MetricValue
+public sealed class MetricValue : IEquatable<MetricValue>
 {
     public string Label { get; }
     public decimal Value { get; }
@@ -14,8 +14,10 @@ public sealed class MetricValue
         Value = value;
     }
 
-    public override bool Equals(object? obj) =>
-        obj is MetricValue other && Label == other.Label && Value == other.Value;
+    public bool Equals(MetricValue? other) =>
+        other is not null && Label == other.Label && Value == other.Value;
+
+    public override bool Equals(object? obj) => Equals(obj as MetricValue);
 
     public override int GetHashCode() => HashCode.Combine(Label, Value);
 }

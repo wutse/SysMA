@@ -67,6 +67,9 @@ internal sealed class FakeDashboardAlertRepository : IAlertRecordRepository
     public Task<bool> HasUnacknowledgedAlertAsync(string systemId, CancellationToken ct = default)
         => Task.FromResult(_systemsWithAlerts.Contains(systemId));
 
+    public Task<IReadOnlySet<string>> GetSystemsWithUnacknowledgedAlertAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlySet<string>>(new HashSet<string>(_systemsWithAlerts));
+
     public Task<IReadOnlyList<AlertRecord>> GetUnacknowledgedAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<AlertRecord>>([]);
 

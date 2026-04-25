@@ -27,6 +27,7 @@ public sealed class OverrideComponentStateHandler
 {
     private readonly IMonitoredComponentRepository _componentRepository;
     private readonly IComponentStateRepository _stateRepository;
+    private readonly IComponentStateCache _stateCache;
     private readonly IDomainEventDispatcher _eventDispatcher;
     private readonly IAuditLogger _auditLogger;
     private readonly IRealtimeNotificationService _realtimeNotification;
@@ -35,6 +36,7 @@ public sealed class OverrideComponentStateHandler
     public OverrideComponentStateHandler(
         IMonitoredComponentRepository componentRepository,
         IComponentStateRepository stateRepository,
+        IComponentStateCache stateCache,
         IDomainEventDispatcher eventDispatcher,
         IAuditLogger auditLogger,
         IRealtimeNotificationService realtimeNotification,
@@ -42,6 +44,7 @@ public sealed class OverrideComponentStateHandler
     {
         _componentRepository = componentRepository;
         _stateRepository = stateRepository;
+        _stateCache = stateCache;
         _eventDispatcher = eventDispatcher;
         _auditLogger = auditLogger;
         _realtimeNotification = realtimeNotification;
@@ -86,6 +89,7 @@ public sealed class OverrideComponentStateHandler
         var previousStatus = state.Status;
         state.UpdateStatus(command.NewStatus, now);
         await _stateRepository.UpsertAsync(state, ct);
+        _stateCache.SetState(state);
 
         _logger.LogInformation(
             "Component state overridden: Component={ComponentId}, {Previous}->{New}, Operator={Operator}",
@@ -95,6 +99,7 @@ public sealed class OverrideComponentStateHandler
         var overriddenEvent = new ComponentStateOverridden(
             ComponentId: command.ComponentId,
             SystemId: command.SystemId,
+            PreviousStatus: previousStatus,
             NewStatus: command.NewStatus,
             OperatorName: command.OperatorName,
             Reason: command.Reason,

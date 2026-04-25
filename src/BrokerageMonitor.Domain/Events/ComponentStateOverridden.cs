@@ -8,6 +8,7 @@ namespace BrokerageMonitor.Domain.Events;
 public sealed record ComponentStateOverridden(
     string ComponentId,
     string SystemId,
+    ComponentStatus PreviousStatus,
     ComponentStatus NewStatus,
     string OperatorName,
     string Reason,

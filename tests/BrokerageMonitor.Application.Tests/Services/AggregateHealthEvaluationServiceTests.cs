@@ -701,6 +701,60 @@ public sealed class AggregateHealthEvaluationServiceTests
     }
 
     [TestMethod]
+    public async Task EvaluateDefinitionAsync_SendOnFailure_False_SuccessExecution_DoesNotSendEmail()
+    {
+        // Arrange
+        var (sut, definitions, executions, systems, componentStates, _, email, _, _, _) = BuildSut();
+        const string componentId = "COMP-001";
+        var def = MakeDefinition(
+            watchedComponents: [new WatchedComponent(componentId, ComponentType.ScheduledJob)],
+            sendOnFailure: false,                                   // ← opt-out
+            emailRecipients: [new EmailAddress("ops@example.com")]);
+        definitions.Add(def);
+        systems.Add(MakeSystem(def.SystemId));
+
+        var execution = MakeInProgressExecution(def.DefinitionId);
+        execution.AddCompletedComponent(componentId);
+        executions.Add(execution);
+
+        var state = new ComponentState(componentId, ComponentStatus.Completed);
+        componentStates.Add(state);
+
+        // Act
+        await sut.EvaluateDefinitionAsync(def.DefinitionId);
+
+        // Assert — SendOnFailure = false means no notifications at all
+        Assert.AreEqual(0, email.SendHealthSummaryCallCount);
+    }
+
+    [TestMethod]
+    public async Task EvaluateDefinitionAsync_SendOnFailure_False_FailedExecution_DoesNotSendEmail()
+    {
+        // Arrange
+        var (sut, definitions, executions, systems, componentStates, _, email, _, _, _) = BuildSut();
+        const string componentId = "COMP-001";
+        var def = MakeDefinition(
+            watchedComponents: [new WatchedComponent(componentId, ComponentType.ScheduledJob)],
+            sendOnFailure: false,
+            emailRecipients: [new EmailAddress("ops@example.com")]);
+        definitions.Add(def);
+        systems.Add(MakeSystem(def.SystemId));
+
+        var execution = MakeInProgressExecution(def.DefinitionId);
+        executions.Add(execution);
+
+        // Component not completed → Failed execution
+        var state = new ComponentState(componentId, ComponentStatus.Running);
+        componentStates.Add(state);
+
+        // Act
+        await sut.EvaluateDefinitionAsync(def.DefinitionId);
+
+        // Assert
+        Assert.AreEqual(0, email.SendHealthSummaryCallCount);
+    }
+
+    [TestMethod]
     public async Task EvaluateDefinitionAsync_FR020_InboxAlwaysWritten_EvenWithNoEmailConfig()
     {
         // Arrange

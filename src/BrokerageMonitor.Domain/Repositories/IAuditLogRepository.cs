@@ -1,3 +1,5 @@
+using BrokerageMonitor.Domain.ReadModels;
+
 namespace BrokerageMonitor.Domain.Repositories;
 
 public interface IAuditLogRepository
