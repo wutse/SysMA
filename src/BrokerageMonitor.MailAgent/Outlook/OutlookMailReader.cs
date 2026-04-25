@@ -83,24 +83,24 @@ public sealed class OutlookMailReader : IOutlookMailReader, IDisposable
         }
     }
 
+    // COM objects reused across polls — created once on the STA thread.
+    private MSOutlook.Application? _outlookApp;
+    private MSOutlook.NameSpace? _outlookNs;
+
     // -------------------------------------------------------------------------
     // Core Outlook COM logic — runs exclusively on the STA thread
     // -------------------------------------------------------------------------
 
     private IReadOnlyList<RawMailItem> ReadUnreadMailsOnSta()
     {
-        MSOutlook.Application? app = null;
-        MSOutlook.NameSpace? ns = null;
         MSOutlook.MAPIFolder? folder = null;
         MSOutlook.Items? items = null;
 
         try
         {
-            app = new MSOutlook.Application();
-            ns = app.GetNamespace("MAPI");
-            ns.Logon(Missing.Value, Missing.Value, false, false);
+            EnsureOutlookSession();
 
-            folder = FindFolder(ns, _folderName);
+            folder = FindFolder(_outlookNs!, _folderName);
             if (folder is null)
             {
                 _logger.LogError(
@@ -142,18 +142,47 @@ public sealed class OutlookMailReader : IOutlookMailReader, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Outlook COM error while reading mailbox folder '{FolderName}'.", _folderName);
+            // Tear down the cached session so the next poll attempts a fresh connection.
+            ReleaseOutlookSession();
             return [];
         }
         finally
         {
             ReleaseIfNotNull(items);
             ReleaseIfNotNull(folder);
-            if (ns is not null)
-            {
-                try { ns.Logoff(); } catch { /* best-effort */ }
-                Marshal.ReleaseComObject(ns);
-            }
-            ReleaseIfNotNull(app);
+        }
+    }
+
+    /// <summary>
+    /// Creates the <see cref="MSOutlook.Application"/> and <see cref="MSOutlook.NameSpace"/>
+    /// once per reader lifetime (lazy, STA-thread only).
+    /// </summary>
+    private void EnsureOutlookSession()
+    {
+        if (_outlookApp is not null && _outlookNs is not null)
+            return;
+
+        _outlookApp = new MSOutlook.Application();
+        _outlookNs = _outlookApp.GetNamespace("MAPI");
+        _outlookNs.Logon(Missing.Value, Missing.Value, false, false);
+        _logger.LogInformation("OutlookMailReader: COM session initialised.");
+    }
+
+    /// <summary>
+    /// Releases the cached COM session. Called on error or dispose.
+    /// </summary>
+    private void ReleaseOutlookSession()
+    {
+        if (_outlookNs is not null)
+        {
+            try { _outlookNs.Logoff(); } catch { /* best-effort */ }
+            Marshal.ReleaseComObject(_outlookNs);
+            _outlookNs = null;
+        }
+        if (_outlookApp is not null)
+        {
+            Marshal.ReleaseComObject(_outlookApp);
+            _outlookApp = null;
         }
     }
 
@@ -195,6 +224,11 @@ public sealed class OutlookMailReader : IOutlookMailReader, IDisposable
         if (_disposed) return;
         _disposed = true;
         _workQueue.CompleteAdding();
+        // Release COM session on the STA thread (synchronous shutdown).
+        if (!_workQueue.IsAddingCompleted)
+            _workQueue.Add(ReleaseOutlookSession);
+        else
+            ReleaseOutlookSession();
         _workQueue.Dispose();
     }
 }
