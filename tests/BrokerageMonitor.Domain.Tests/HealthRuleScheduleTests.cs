@@ -100,4 +100,49 @@ public sealed class HealthRuleScheduleTests
         // Assert
         Assert.AreEqual(s1, s2);
     }
+
+    // ── MatchesCron robustness ────────────────────────────────────────────────
+
+    [TestMethod]
+    public void IsMatch_CronWithStepExpression_MatchesEverySecondDay()
+    {
+        // "0 0 */2 * *" — every other day; day 1, 3, 5... should match
+        var schedule = new HealthRuleSchedule(ScheduleType.Cron, "0 0 */2 * *");
+        var match    = new DateOnly(2026, 4, 3);   // day=3 → 1+2=3 → matches
+        var noMatch  = new DateOnly(2026, 4, 4);   // day=4 → not in 1,3,5,…
+
+        Assert.IsTrue(schedule.IsMatch(match));
+        Assert.IsFalse(schedule.IsMatch(noMatch));
+    }
+
+    [TestMethod]
+    public void IsMatch_CronWithExplicitRangeStart_MatchesFromRangeStart()
+    {
+        // "0 0 10/5 * *" — day 10,15,20,25,30
+        var schedule = new HealthRuleSchedule(ScheduleType.Cron, "0 0 10/5 * *");
+        var match    = new DateOnly(2026, 4, 15);
+        var noMatch  = new DateOnly(2026, 4, 12);
+
+        Assert.IsTrue(schedule.IsMatch(match));
+        Assert.IsFalse(schedule.IsMatch(noMatch));
+    }
+
+    [TestMethod]
+    public void IsMatch_CronWithZeroStep_DoesNotMatch()
+    {
+        // "0 0 */0 * *" — step=0 is invalid; must not hang or throw
+        var schedule = new HealthRuleSchedule(ScheduleType.Cron, "0 0 */0 * *");
+
+        Assert.IsFalse(schedule.IsMatch(new DateOnly(2026, 4, 1)));
+    }
+
+    [TestMethod]
+    public void IsMatch_CronWithNonNumericRangeStart_FallsBackToMin()
+    {
+        // "0 0 X/5 * *" — non-numeric range start should not throw; defaults to min(1)
+        var schedule = new HealthRuleSchedule(ScheduleType.Cron, "0 0 X/5 * *");
+
+        // Should not throw; day 1,6,11,16,21,26,31 → day 1 matches
+        Assert.IsTrue(schedule.IsMatch(new DateOnly(2026, 4, 1)));
+    }
 }

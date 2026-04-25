@@ -40,7 +40,8 @@ public sealed class HealthRuleSchedule : IEquatable<HealthRuleSchedule>
             return false;
 
         // Standard 5-field cron: minute hour dayOfMonth month dayOfWeek
-        // For daily execution matching, we evaluate against the date components.
+        // minute (parts[0]) and hour (parts[1]) are intentionally ignored — this
+        // method matches a date, not a date-time; time-of-day is handled by the scheduler.
         var parts = CronExpression.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length < 5)
             return false;
@@ -60,10 +61,15 @@ public sealed class HealthRuleSchedule : IEquatable<HealthRuleSchedule>
             if (part.Contains('/'))
             {
                 var stepParts = part.Split('/');
-                if (stepParts.Length != 2 || !int.TryParse(stepParts[1], out var step))
+                if (stepParts.Length != 2 ||
+                    !int.TryParse(stepParts[1], out var step) ||
+                    step <= 0)
                     continue;
 
-                var rangeStart = stepParts[0] == "*" ? min : int.Parse(stepParts[0]);
+                var rangeStart = stepParts[0] == "*"
+                    ? min
+                    : int.TryParse(stepParts[0], out var parsedStart) ? parsedStart : min;
+
                 for (var i = rangeStart; i <= max; i += step)
                 {
                     if (i == value) return true;
