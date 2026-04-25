@@ -26,4 +26,11 @@ public sealed class MailAgentOptions
     /// Example: <c>Inbox</c>.
     /// </summary>
     public string MailboxFolder { get; set; } = "Inbox";
+
+    /// <summary>
+    /// Maximum number of characters allowed in the email body before it is truncated.
+    /// Prevents multi-MB newsletters from causing memory pressure in ZeroMQ messages.
+    /// Default: 65 536 characters (~64 KiB of UTF-16). Set to 0 to disable truncation.
+    /// </summary>
+    public int MaxBodyCharacters { get; set; } = 65_536;
 }
