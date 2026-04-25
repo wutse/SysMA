@@ -1,4 +1,5 @@
 using BrokerageMonitor.Application.UseCases.History;
+using BrokerageMonitor.Domain.ReadModels;
 using BrokerageMonitor.Domain.Repositories;
 using BrokerageMonitor.Domain.ValueObjects;
 

@@ -1,3 +1,4 @@
+using BrokerageMonitor.Domain.ReadModels;
 using BrokerageMonitor.Domain.Repositories;
 
 namespace BrokerageMonitor.Application.UseCases.History;

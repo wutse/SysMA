@@ -1,6 +1,6 @@
 using BrokerageMonitor.Domain.ValueObjects;
 
-namespace BrokerageMonitor.Domain.Repositories;
+namespace BrokerageMonitor.Domain.ReadModels;
 
 /// <summary>
 /// Immutable snapshot record written at history entry creation time.
