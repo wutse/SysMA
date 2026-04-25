@@ -1,12 +1,14 @@
 using BrokerageMonitor.Application.Notifications;
+using MailKit.Net.Smtp;
+using MailKit.Security;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.Net.Mail;
+using MimeKit;
 
 namespace BrokerageMonitor.Infrastructure.Notifications;
 
 /// <summary>
-/// SMTP email notification service using <see cref="SmtpClient"/> with no-auth relay.
+/// SMTP email notification service using MailKit with no-auth relay.
 /// US-053 (EP-009). FR-013, FR-014.
 ///
 /// Throws <see cref="EmailDeliveryException"/> on any SMTP failure so that
@@ -85,24 +87,25 @@ public sealed class SmtpEmailNotificationService : IEmailNotificationService
     {
         try
         {
-            using var message = new MailMessage
-            {
-                From = new MailAddress(_options.FromAddress, _options.FromDisplayName),
-                Subject = subject,
-                Body = body,
-                IsBodyHtml = true
-            };
+            var message = new MimeMessage();
+            message.From.Add(new MailboxAddress(_options.FromDisplayName, _options.FromAddress));
 
             foreach (var recipient in recipients)
-                message.To.Add(recipient);
+                message.To.Add(MailboxAddress.Parse(recipient));
 
-            using var client = new SmtpClient(_options.Host, _options.Port)
-            {
-                EnableSsl = _options.EnableSsl,
-                Credentials = null  // No-auth relay (US-053)
-            };
+            message.Subject = subject;
+            message.Body = new TextPart(MimeKit.Text.TextFormat.Html) { Text = body };
 
-            await client.SendMailAsync(message, ct).ConfigureAwait(false);
+            using var client = new SmtpClient();
+            await client.ConnectAsync(
+                _options.Host,
+                _options.Port,
+                _options.EnableSsl ? SecureSocketOptions.StartTls : SecureSocketOptions.None,
+                ct).ConfigureAwait(false);
+
+            // No-auth relay (US-053)
+            await client.SendAsync(message, ct).ConfigureAwait(false);
+            await client.DisconnectAsync(quit: true, ct).ConfigureAwait(false);
 
             _logger.LogInformation(
                 "Email sent: Subject='{Subject}', Recipients={Count}.", subject, recipients.Count);
