@@ -1,3 +1,4 @@
+using BrokerageMonitor.Application.Services;
 using BrokerageMonitor.Domain.Aggregates;
 using BrokerageMonitor.Domain.Repositories;
 using BrokerageMonitor.Domain.ValueObjects;
@@ -30,13 +31,16 @@ public sealed record UpsertHealthMonitorDefinitionCommand(
 public sealed class UpsertHealthMonitorDefinitionHandler
 {
     private readonly IHealthMonitorDefinitionRepository _definitionRepo;
+    private readonly IHealthJobScheduler _jobScheduler;
     private readonly ILogger<UpsertHealthMonitorDefinitionHandler> _logger;
 
     public UpsertHealthMonitorDefinitionHandler(
         IHealthMonitorDefinitionRepository definitionRepo,
+        IHealthJobScheduler jobScheduler,
         ILogger<UpsertHealthMonitorDefinitionHandler> logger)
     {
         _definitionRepo = definitionRepo;
+        _jobScheduler = jobScheduler;
         _logger = logger;
     }
 
@@ -76,6 +80,7 @@ public sealed class UpsertHealthMonitorDefinitionHandler
                 existing.SetSendOnFailure(command.SendOnFailure);
 
                 await _definitionRepo.UpsertAsync(existing, ct).ConfigureAwait(false);
+                await _jobScheduler.ScheduleOrRescheduleAsync(existing.DefinitionId, existing.DeadlineTime, ct).ConfigureAwait(false);
 
                 _logger.LogInformation(
                     "Updated HealthMonitorDefinition {DefinitionId} for system {SystemId}.",
@@ -99,6 +104,7 @@ public sealed class UpsertHealthMonitorDefinitionHandler
             command.SendOnFailure);
 
         await _definitionRepo.UpsertAsync(definition, ct).ConfigureAwait(false);
+        await _jobScheduler.ScheduleOrRescheduleAsync(definition.DefinitionId, definition.DeadlineTime, ct).ConfigureAwait(false);
 
         _logger.LogInformation(
             "Created HealthMonitorDefinition {DefinitionId} for system {SystemId}.",
