@@ -1,24 +1,21 @@
 # BrokerageMonitor.Web — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-24 _(previous: 2026-04-22)_
+> **Date**: 2026-04-25 _(previous: 2026-04-24)_
 > **Layer**: Web / Presentation (depends on Application + Infrastructure)
 
 ### Δ Changes Since Previous Review
 
-| # | Issue | Status |
-|---|-------|--------|
-| 1 | `AddZeroMq()` never called — heartbeat pipeline disconnected | ✅ **FIXED** |
-| 2 | No concrete `IAuditLogger` / NullAuditLogger in production | ✅ **FIXED** |
-| 3 | `Program.cs` SRP violation | 🟡 **STILL OPEN** |
-| 4 | Dynamic Quartz job scheduling not re-run on definition changes | 🟡 **STILL OPEN** |
-| 5 | `AddZeroMq` missing meant `IHeartbeatTimerRegistry` resolved as no-op | ✅ **FIXED** (consequence of fix #1) |
+| #   | Issue                                                          | Status                                                                                 |
+| --- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 1   | `Program.cs` SRP violation                                     | ✅ **FIXED** — orchestration extracted to `WebApplicationStartup`                       |
+| 2   | Dynamic Quartz job scheduling not triggered on new definitions | ✅ **FIXED** — `UpsertHealthMonitorDefinitionHandler` calls `ScheduleOrRescheduleAsync` |
 
 ---
 
-## 📊 Architecture Health Score: 7.5 / 10 _(improved from 6.0)_
+## 📊 Architecture Health Score: 9.0 / 10
 
-The Web project has a clean startup sequence, correct Blazor Server circuit-scoped session design, and proper layering. **Two critical operational bugs from the previous review have been fixed**: `AddZeroMq()` is now called (heartbeat pipeline is active) and the concrete `AuditLogger` is now registered. The remaining concerns are `Program.cs` complexity and the static Quartz job schedule.
+The Web project has no open violations. `Program.cs` is now a clean entry point; all startup orchestration is in `WebApplicationStartup`. New and updated `HealthMonitorDefinition`s are immediately scheduled in Quartz at runtime, without requiring a restart.
 
 ---
 
@@ -44,113 +41,57 @@ The Web project has a clean startup sequence, correct Blazor Server circuit-scop
 
 ---
 
-### 2. ✅ ~~Audit Logging Is Silently Disabled~~ — FIXED
+## ⚠️ No Open Violations
 
-`InfrastructureServiceCollectionExtensions.AddPersistence()` now calls `services.AddScoped<IAuditLogger, AuditLogger>()`. The Application layer correctly uses `services.TryAddScoped<IAuditLogger, NullAuditLogger>()` as a test-only fallback, so the Infrastructure implementation takes precedence in any deployment that calls `AddPersistence()`.
+All previously identified violations have been resolved in this sprint:
 
----
-
-### 3. `Program.cs` Violates Single Responsibility
-
-The `Program.cs` directly orchestrates:
-- Infrastructure registration (4 extension method calls)
-- Quartz job scheduling (inline job schedule definitions)
-- Database initialization
-- First-run seeding
-- Per-definition health job scheduling (a nested scope + repository query + loop)
-- Station startup recovery
-
-This is 80+ lines of orchestration logic that belongs in dedicated startup services or at minimum in named helper methods.
+- **`Program.cs` SRP** — Startup orchestration extracted to `WebApplicationStartup`. `Program.cs` is now a clean top-level entry point (~90 lines including error-handling boilerplate).
+- **Dynamic Quartz scheduling** — `UpsertHealthMonitorDefinitionHandler` calls `_jobScheduler.ScheduleOrRescheduleAsync()` on every create and update, ensuring runtime changes take effect immediately.
 
 ---
 
-### 4. Dynamic Quartz Job Scheduling Not Re-Run on Definition Changes
+## 💡 Observation
 
-Health evaluation jobs (`AggregateHealthEvaluationJob`) are scheduled once at startup from the definition repository. If a `HealthMonitorDefinition` is created or updated via `UpsertHealthMonitorDefinitionHandler` while the application is running, the corresponding Quartz trigger is **not** added or updated.
-
-**Impact**: New definitions will not have their deadline evaluated until the next application restart.
+The `ScheduleStaticJobsAsync` method in `WebApplicationStartup` hardcodes the `SmokeTestJob` and `DailyExecutionCreatorJob` cron expressions as string literals (`"0 0 1 * * ?"`, `"0 30 5 * * ?"`). Consider moving these to `appsettings.json` / `IOptions<>` to allow environment-specific scheduling without a recompile.
 
 ---
 
-## 💡 Refactoring Suggestions
+## 📝 Implementation Example — Before vs After (For Reference)
 
-1. **Extract startup orchestration into an `AppStartup` helper** — Create a `static class AppStartup` with methods like `ScheduleJobsAsync(IScheduler, IServiceProvider)` and `SeedAndRecoverAsync(IServiceProvider)` to reduce `Program.cs` to a composition root concern only.
-
-2. **Call `QuartzJobScheduler.ScheduleDefinitionJobAsync()` from `UpsertHealthMonitorDefinitionHandler`** — Inject `ISchedulerFactory` into the handler and schedule/reschedule the `AggregateHealthEvaluationJob` whenever a definition is created or modified.
-
----
-
-## 📝 Implementation Examples
-
-### Before — Missing Critical Service Registration
+### Before — Bloated `Program.cs`
 
 ```csharp
-// Program.cs (current)
-builder.Services.AddPersistence();
-builder.Services.AddApplicationServices();
-// ❌ ZeroMQ not registered — heartbeat pipeline is dead
-builder.Services.AddSignalR();
-builder.Services.AddRealtimeNotifications();
-builder.Services.AddNotificationServices(builder.Configuration);
+// Program.cs (previous) — 80+ lines of orchestration
+var scheduler = await ...GetScheduler();
+await scheduler.ScheduleCronJob<SmokeTestJob>("0 0 1 * * ?");
+// ... DB init ...
+// ... seeding ...
+// ... per-definition Quartz loop ...
+await using var scope = app.Services.CreateAsyncScope();
+var jobScheduler = scope.ServiceProvider.GetRequiredService<IHealthJobScheduler>();
+var definitions = await definitionRepo.GetAllActiveAsync();
+foreach (var def in definitions)
+    await jobScheduler.ScheduleOrRescheduleAsync(def.DefinitionId, def.DeadlineTime);
+// ... recovery ...
+app.Run();
 ```
 
-### After — ZeroMQ Properly Registered
+### After — Delegated to `WebApplicationStartup`
 
 ```csharp
-// Program.cs (proposed)
-builder.Services.AddPersistence();
-builder.Services.AddApplicationServices();
-builder.Services.AddZeroMq(builder.Configuration);  // ✅ heartbeat pipeline live
-builder.Services.AddSignalR();
-builder.Services.AddRealtimeNotifications();
-builder.Services.AddNotificationServices(builder.Configuration);
-```
+// Program.cs (current) — focused entry point
+await new WebApplicationStartup(app).InitialiseAsync();
+app.Run();
 
-And in `appsettings.json`:
-```json
+// WebApplicationStartup.cs — each concern in its own private method
+public async Task InitialiseAsync(CancellationToken ct = default)
 {
-  "ZeroMQ": {
-    "BrokerAddress": "tcp://localhost:5556"
-  }
+    await ScheduleStaticJobsAsync(ct);
+    await InitialiseDatabaseAsync(ct);
+    await SeedInitialDataAsync(ct);
+    await ScheduleHealthEvaluationJobsAsync(ct);
+    await RunStartupRecoveryAsync(ct);
 }
-```
-
----
-
-### Before — No Audit Logging in Production
-
-```csharp
-// AddApplicationServices() — NullAuditLogger never overridden
-services.AddSingleton<IAuditLogger, NullAuditLogger>();
-```
-
-### After — Concrete Implementation in Infrastructure
-
-```csharp
-// Infrastructure/AuditLogger.cs (new file)
-public sealed class AuditLogger : IAuditLogger
-{
-    private readonly IAuditLogRepository _repo;
-    public AuditLogger(IAuditLogRepository repo) => _repo = repo;
-
-    public Task LogStatusChangedAsync(string systemId, string componentId,
-        ComponentStatus previous, ComponentStatus current,
-        DateTimeOffset occurredAt, CancellationToken ct = default)
-        => _repo.AddAsync(new AuditLogEntry(
-            Guid.NewGuid(), systemId, componentId,
-            $"StatusChanged:{previous}→{current}",
-            "system", null, occurredAt), ct);
-
-    public Task LogOperatorActionAsync(string systemId, string? componentId,
-        string actionType, string operatorName,
-        string? reason, DateTimeOffset occurredAt, CancellationToken ct = default)
-        => _repo.AddAsync(new AuditLogEntry(
-            Guid.NewGuid(), systemId, componentId,
-            actionType, operatorName, reason, occurredAt), ct);
-}
-
-// InfrastructureServiceCollectionExtensions.AddPersistence():
-services.AddScoped<IAuditLogger, AuditLogger>(); // ✅ overrides NullAuditLogger
 ```
 
 ---
@@ -158,26 +99,33 @@ services.AddScoped<IAuditLogger, AuditLogger>(); // ✅ overrides NullAuditLogge
 ```mermaid
 %% Web Startup Sequence
 graph TD
-    subgraph "Program.cs Startup"
+    subgraph "Program.cs"
         NL["Init NLog"]
         WB["WebApplication.CreateBuilder()"]
-        REG["Register Services<br/>(Persistence, Application,<br/>ZeroMQ ⚠️ MISSING, SignalR,<br/>Notifications)"]
+        REG["Register Services<br/>(Persistence, Application,<br/>ZeroMQ, SignalR,<br/>Notifications)"]
         BUILD["app.Build()"]
-        DBINIT["DatabaseInitializer.InitialiseAsync()"]
-        SEED["AppSettingsImporter.ImportIfEmptyAsync()"]
-        SCHED["Schedule Quartz Jobs<br/>(SmokeTest, DailyExec, HealthEval)"]
-        RECOVER["StationStartupRecoveryService.RecoverAsync()"]
+        STARTUP["WebApplicationStartup.InitialiseAsync()"]
         RUN["app.Run()"]
+    end
+
+    subgraph "WebApplicationStartup"
+        SCHED["ScheduleStaticJobsAsync()"]
+        DBINIT["InitialiseDatabaseAsync()"]
+        SEED["SeedInitialDataAsync()"]
+        HEALTHSCHED["ScheduleHealthEvaluationJobsAsync()"]
+        RECOVER["RunStartupRecoveryAsync()"]
     end
 
     NL -->|"logger ready"| WB
     WB -->|"builder"| REG
     REG -->|"services wired"| BUILD
-    BUILD -->|"app"| DBINIT
-    DBINIT -->|"schema ready"| SEED
-    SEED -->|"data seeded"| SCHED
-    SCHED -->|"jobs scheduled"| RECOVER
-    RECOVER -->|"state restored"| RUN
+    BUILD -->|"app"| STARTUP
+    STARTUP -->|"step 1"| SCHED
+    SCHED -->|"step 2"| DBINIT
+    DBINIT -->|"step 3"| SEED
+    SEED -->|"step 4"| HEALTHSCHED
+    HEALTHSCHED -->|"step 5"| RECOVER
+    RECOVER -->|"ready"| RUN
 ```
 
-> **Design Intent**: Startup operations are ordered by dependency — schema must exist before seeding, seeding before scheduling, and scheduling before recovery (which reads definitions from DB). The current implementation correctly respects this order; the critical missing step is wiring `AddZeroMq` during service registration.
+> **Design Intent**: Each startup step is a private method in `WebApplicationStartup`, testable in isolation. The ordering is dependency-driven: schema before data, data before scheduling, scheduling before recovery.

@@ -1,23 +1,22 @@
 # BrokerageMonitor.MailAgent — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-24 _(previous: 2026-04-22)_
+> **Date**: 2026-04-25 _(previous: 2026-04-24)_
 > **Layer**: MailAgent (standalone process — no project references to Domain/Application)
 
 ### Δ Changes Since Previous Review
 
-| # | Issue | Status |
-|---|-------|--------|
-| 1 | New `Application` COM instance per poll (COM instability risk) | ✅ **RESOLVED** — now per-call on dedicated STA thread; see detail below |
-| 2 | Sync-over-async `GetAwaiter().GetResult()` | 🟡 **BY DESIGN** — STA thread requirement makes async difficult; cancellation still lost |
-| 3 | Unbounded email body size in ZeroMQ frame | 🔴 **STILL OPEN** |
-| 4 | `PollAndPublishAsync` not truly async | 🟡 **STILL OPEN** |
+| #   | Issue                                         | Status                                                                           |
+| --- | --------------------------------------------- | -------------------------------------------------------------------------------- |
+| 1   | COM `Application` instance recreated per poll | ✅ **FIXED** — long-lived `_outlookApp`/`_outlookNs` via `EnsureOutlookSession()` |
+| 2   | Unbounded email body size in ZeroMQ frame     | ✅ **FIXED** — `TruncateBody()` caps at `MaxBodyCharacters` from options          |
+| 3   | Sync-over-async `GetAwaiter().GetResult()`    | 🟡 **BY DESIGN** — STA thread requirement; acceptable                             |
 
 ---
 
-## 📊 Architecture Health Score: 7.5 / 10 _(unchanged)_
+## 📊 Architecture Health Score: 9.0 / 10
 
-The MailAgent is cleanly isolated as a separate Windows process with no coupling to the main solution's Domain or Application layers. The STA thread architecture has been solidified with a long-lived `BlockingCollection` work queue pattern — eliminating the previous per-call COM server initialization cost. Unbounded email body sizes in ZeroMQ frames remain the primary open concern.
+The MailAgent is in excellent shape. The two previously open concerns — recreating the COM `Application` instance each poll and unbounded ZeroMQ message sizes — have both been resolved. No critical or architectural violations remain. The sync-over-async pattern inside `ReadUnreadMails()` is an acknowledged trade-off for the Outlook STA requirement.
 
 ---
 

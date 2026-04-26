@@ -1,163 +1,99 @@
 # BrokerageMonitor.Domain — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-24
+> **Date**: 2026-04-25 _(previous: 2026-04-24)_
 > **Layer**: Domain (innermost — no project references)
+
+### Δ Changes Since Previous Review
+
+| #   | Issue                                             | Status           |
+| --- | ------------------------------------------------- | ---------------- |
+| 1   | Value objects missing `IEquatable<T>`             | ✅ **FIXED**      |
+| 2   | `AlertRecord.Acknowledge()` allows overwriting    | ✅ **FIXED**      |
+| 3   | `HealthRuleSchedule.MatchesCron()` fragile parser | ✅ **FIXED**      |
+| 4   | Read models in `Repositories/` folder             | ✅ **FIXED**      |
+| 5   | `ComponentState.Rehydrate()` missing              | ✅ **FIXED**      |
+| 6   | Non-deterministic public constructors             | 🟡 **STILL OPEN** |
 
 ---
 
-## 📊 Architecture Health Score: 7.5 / 10
+## 📊 Architecture Health Score: 8.5 / 10
 
-The Domain layer demonstrates solid DDD discipline with well-encapsulated aggregates, immutable domain events, and value objects that enforce invariants at construction. The primary concerns are non-deterministic constructors, a misplaced read-model folder, and missing `IEquatable<T>` implementations on value objects.
+The Domain layer is now in excellent shape. All previous violations have been resolved: value objects implement `IEquatable<T>`, `AlertRecord.Acknowledge()` guards against double-acknowledgment, `MatchesCron()` uses safe parsing with a documented intent for 3-of-5 field matching, read models are correctly placed in `ReadModels/`, and `Rehydrate()` factories exist on `ComponentState` and `DailyExecution` for deterministic DB hydration. The only remaining concern is that the public constructors of `ComponentState` and `DailyExecution` still capture `DateTimeOffset.UtcNow` directly, which affects unit test precision.
 
 ---
 
 ## ✅ Architectural Strengths
 
-1. **Strong Aggregate Encapsulation** — All aggregates use `private init` / `private set` for properties, with a dedicated `private` Dapper-materialization constructor. Business-mutating methods are the only public surface for state changes.
+1. **Strong Aggregate Encapsulation** — All aggregates use `private init` / `private set` for properties, with dedicated Dapper-materialization constructors. Business-mutating methods are the only public surface for state changes.
 
-2. **Domain Events as Records** — `sealed record` types for events ensure immutability and structural equality without boilerplate. The `IDomainEvent` marker with `OccurredAt` is clean and minimal.
+2. **Domain Events as Records** — `sealed record` types ensure immutability and structural equality. The `IDomainEvent` marker with `OccurredAt` is clean and minimal.
 
-3. **Value Object Invariants Enforced at Construction** — `EmailAddress`, `MarketSessionWindow`, `MailParsingRule`, and `HealthRuleSchedule` all throw `ArgumentException` when invalid, ensuring that no invalid value objects can exist at runtime.
+3. **Value Object Invariants Enforced at Construction** — `EmailAddress`, `MarketSessionWindow`, `MailParsingRule`, and `HealthRuleSchedule` all throw `ArgumentException` on invalid input.
 
-4. **ReDoS Protection on `EmailAddress`** — The compiled regex includes `TimeSpan.FromMilliseconds(100)` timeout, preventing catastrophic backtracking on malicious input.
+4. **ReDoS Protection on `EmailAddress`** — The compiled regex includes a `TimeSpan.FromMilliseconds(100)` timeout.
 
-5. **Terminal State Guards** — `DailyExecution.Complete()` rejects non-terminal statuses and prevents terminal-state overwrites (BI-013). The `TerminalStatuses` set is defined as a static `IReadOnlySet<DailyExecutionStatus>`, which is efficient.
+5. **Terminal State Guards** — `DailyExecution.Complete()` rejects non-terminal statuses and prevents terminal-state overwrites (BI-013). The `TerminalStatuses` set is a static `IReadOnlySet<DailyExecutionStatus>`.
 
-6. **Business Rule Traceability** — Every aggregate and most methods reference their FR/BI requirement IDs in XML documentation, making traceability clear.
+6. **`Rehydrate()` Factories** — Both `ComponentState` and `DailyExecution` expose `public static Rehydrate(...)` factory methods. Repositories use these for DB hydration — no reflection, deterministic timestamps.
+
+7. **`IEquatable<T>` on All Value Objects** — All seven value objects (`EmailAddress`, `MarketSessionWindow`, `HealthRuleSchedule`, `MailParsingRule`, `MetricValue`, `SubIndicator`, `WatchedComponent`) implement `IEquatable<T>` — no boxing in generic collections.
+
+8. **`AlertRecord.Acknowledge()` is Idempotent-Safe** — Throws `InvalidOperationException` on a second call, protecting audit integrity.
+
+9. **Safe Cron Parser** — `MatchesCron()` uses `int.TryParse` throughout, guards against step divisor zero, and clearly documents the 3-of-5 field intent (minute/hour are scheduler responsibilities).
+
+10. **Read Models Correctly Placed** — `AuditLogEntry` and `ExecutionHistoryEntry` live in `ReadModels/`. The `Repositories/` folder contains only interface contracts.
 
 ---
 
-## ⚠️ Critical Violations
+## ⚠️ Remaining Violation
 
-### 1. Non-Deterministic Constructors Impede Testability
+### 1. Non-Deterministic Public Constructors Impede Unit Testing
 
-`ComponentState` and `DailyExecution` set timestamps via `DateTimeOffset.UtcNow` in their constructors, making them non-deterministic and hard to test without time-mocking.
+The public constructors of `ComponentState` and `DailyExecution` still capture `DateTimeOffset.UtcNow` internally:
 
 ```csharp
-// ComponentState.cs — line 26
-LastStatusChangedAt = DateTimeOffset.UtcNow;
+// ComponentState.cs
+public ComponentState(string componentId, ComponentStatus initialStatus = ComponentStatus.Unknown)
+{
+    // ...
+    LastStatusChangedAt = DateTimeOffset.UtcNow; // ❌ non-deterministic
+}
 
-// DailyExecution.cs — line 64
-CreatedAt = DateTimeOffset.UtcNow;
-```
-
-**Impact**: Tests cannot verify exact timestamp values. Infrastructure is forced to use reflection to override these (see `DailyExecutionRepository`).
-
----
-
-### 2. Read Models Misplaced in `Repositories/` Folder
-
-`AuditLogEntry` and `ExecutionHistoryEntry` are `sealed record` types co-located with repository interfaces. They are read models/projections — not repository contracts.
-
-**Impact**: The `Repositories/` folder conflates two responsibilities: interface definitions and data shapes. Any developer browsing the folder cannot distinguish contracts from data models.
-
----
-
-### 3. Value Objects Missing `IEquatable<T>`
-
-All value objects (`EmailAddress`, `MarketSessionWindow`, `HealthRuleSchedule`, `MailParsingRule`, `MetricValue`, `SubIndicator`, `WatchedComponent`) override `Equals(object?)` but do not implement `IEquatable<T>`.
-
-**Impact**: When used in generic collections (`IReadOnlyList<EmailAddress>`, `HashSet<WatchedComponent>`), the runtime falls back to boxing for equality comparisons instead of the type-safe generic path.
-
----
-
-### 4. `AlertRecord.Acknowledge()` Allows Overwriting
-
-There is no guard preventing a second call to `Acknowledge()` from overwriting the original `AcknowledgedBy` and `AcknowledgedAt` values.
-
-**Impact**: Audit integrity is at risk — the original acknowledging operator can be silently replaced.
-
----
-
-### 5. `HealthRuleSchedule.MatchesCron()` Custom Parser Is Fragile
-
-The domain contains a bespoke 5-field cron parser. Three issues:
-- `int.Parse(stepParts[0])` throws `FormatException` on malformed expressions (e.g., `*/a`).
-- Quartz uses **6-field** cron expressions (`seconds minutes hours ...`). The domain's parser evaluates only `day-of-month`, `month`, and `day-of-week`, silently ignoring minute/hour fields passed in from the scheduler.
-- Step divisors of `0` are not guarded, which would cause `DivideByZeroException` in a range loop.
-
----
-
-## 💡 Refactoring Suggestions
-
-1. **Accept timestamps as constructor parameters** — Pass `DateTimeOffset createdAt` into `DailyExecution` and `ComponentState` constructors. Callers provide `DateTimeOffset.UtcNow`; tests provide a fixed value.
-
-2. **Create a `ReadModels/` folder** — Move `AuditLogEntry` and `ExecutionHistoryEntry` there. Reserve `Repositories/` exclusively for interface definitions.
-
-3. **Implement `IEquatable<T>` on all Value Objects** — Follow the standard pattern: implement the interface, override `==` and `!=` operators, and call the typed `Equals(T other)` from `Equals(object?)`.
-
-4. **Guard `Acknowledge()` against re-acknowledgement** — Add an `if (IsAcknowledged) throw new InvalidOperationException(...)` guard to prevent overwriting.
-
-5. **Replace custom cron parser** — Either remove `MatchesCron()` from the domain and push cron schedule evaluation to the scheduler (Quartz) entirely, or validate the expression with Quartz's `CronExpression.IsValidExpression()` at construction time.
-
----
-
-## 📝 Implementation Example
-
-### Before — Non-Deterministic Constructor
-
-```csharp
-// DailyExecution.cs (current)
-public DailyExecution(Guid executionId, Guid definitionId, string systemId,
-    DateOnly executionDate, DailyExecutionStatus initialStatus = DailyExecutionStatus.InProgress,
-    string? missedReason = null)
+// DailyExecution.cs
+public DailyExecution(Guid executionId, Guid definitionId, string systemId, DateOnly executionDate, ...)
 {
     // ...
     CreatedAt = DateTimeOffset.UtcNow; // ❌ non-deterministic
 }
 ```
 
-### After — Deterministic, Testable Constructor
-
-```csharp
-// DailyExecution.cs (proposed)
-public DailyExecution(Guid executionId, Guid definitionId, string systemId,
-    DateOnly executionDate,
-    DateTimeOffset createdAt,                                    // ✅ injected
-    DailyExecutionStatus initialStatus = DailyExecutionStatus.InProgress,
-    string? missedReason = null)
-{
-    // ...
-    CreatedAt = createdAt;
-}
-```
+**Impact**: Unit tests cannot assert exact `CreatedAt` / `LastStatusChangedAt` values when constructing entities directly. The `Rehydrate()` factory mitigates this for DB loads, but any test creating a new `DailyExecution` or `ComponentState` to verify timestamp behavior must work around the non-determinism.
 
 ---
 
-### Before — Value Object Without `IEquatable<T>`
+## 💡 Refactoring Suggestion
+
+Accept the timestamp as an optional constructor parameter, defaulting to `DateTimeOffset.UtcNow` at the call site:
 
 ```csharp
-// EmailAddress.cs (current)
-public sealed class EmailAddress
+// DailyExecution.cs (proposed)
+public DailyExecution(
+    Guid executionId,
+    Guid definitionId,
+    string systemId,
+    DateOnly executionDate,
+    DailyExecutionStatus initialStatus = DailyExecutionStatus.InProgress,
+    string? missedReason = null,
+    DateTimeOffset? createdAt = null)   // ✅ injected; callers pass UtcNow; tests pass a fixed value
 {
-    public override bool Equals(object? obj) =>
-        obj is EmailAddress other && Value == other.Value;
-    public override int GetHashCode() => Value.GetHashCode();
+    // ...
+    CreatedAt = createdAt ?? DateTimeOffset.UtcNow;
 }
 ```
 
-### After — With `IEquatable<T>`
-
-```csharp
-// EmailAddress.cs (proposed)
-public sealed class EmailAddress : IEquatable<EmailAddress>
-{
-    public bool Equals(EmailAddress? other) =>
-        other is not null && Value == other.Value;
-
-    public override bool Equals(object? obj) =>
-        obj is EmailAddress other && Equals(other);
-
-    public override int GetHashCode() => Value.GetHashCode();
-
-    public static bool operator ==(EmailAddress? left, EmailAddress? right) =>
-        left?.Equals(right) ?? right is null;
-
-    public static bool operator !=(EmailAddress? left, EmailAddress? right) =>
-        !(left == right);
-}
-```
+This is a backward-compatible, zero-friction change — no callers need to update unless they want deterministic tests.
 
 ---
 

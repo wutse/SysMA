@@ -1,23 +1,25 @@
 # BrokerageMonitor.Infrastructure — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-24 _(previous: 2026-04-22)_
+> **Date**: 2026-04-25 _(previous: 2026-04-24)_
 > **Layer**: Infrastructure (depends on Domain + Application)
 
 ### Δ Changes Since Previous Review
 
-| # | Issue | Status |
-|---|-------|--------|
-| 1 | Reflection-based domain mutation in `DailyExecutionRepository` | ✅ **FIXED** |
-| 2 | `SmtpClient` deprecated | 🔴 **STILL OPEN** |
-| 3 | Fire-and-forget in `OnTimerFired` | 🟡 **STILL OPEN** |
-| 4 | Inconsistent `IDbConnection` open state | 🟡 **STILL OPEN** |
+| #   | Issue                                                          | Status                                     |
+| --- | -------------------------------------------------------------- | ------------------------------------------ |
+| 1   | Reflection-based domain mutation in `DailyExecutionRepository` | ✅ **FIXED** (previous review)              |
+| 2   | `SmtpClient` deprecated                                        | ✅ **FIXED** — replaced with MailKit        |
+| 3   | Fire-and-forget in `OnTimerFired` — `CancellationToken.None`   | ✅ **IMPROVED** — now uses `_stoppingToken` |
+| 4   | Inconsistent `IDbConnection` open state                        | 🟡 **STILL OPEN**                           |
+| —   | Fire-and-forget still silently swallows exceptions             | 🟡 **NEW (minor)**                          |
+| —   | `SmtpEmailNotificationService` registered as `Transient`       | 🟡 **STILL OPEN**                           |
 
 ---
 
-## 📊 Architecture Health Score: 7 / 10 _(improved from 6.5)_
+## 📊 Architecture Health Score: 8.0 / 10
 
-The Infrastructure layer is generally sound: parameterized Dapper queries prevent SQL injection, key repositories use transactions, ZeroMQ reconnection has proper exponential backoff, and email templates apply HTML encoding. The critical architectural violation (reflection-based domain mutation) has been resolved by introducing a `Rehydrate()` factory method on `DailyExecution`. The deprecated `SmtpClient` and a fire-and-forget timer callback remain as open concerns.
+The Infrastructure layer is in good shape. `MailKit` replaces the deprecated `SmtpClient`, `HeartbeatTimeoutMonitor.OnTimerFired` now propagates the shutdown token, the `Rehydrate()` pattern eliminates all reflection-based domain mutation, and all repositories use parameterized queries. Two minor concerns remain: the fire-and-forget task in `OnTimerFired` still silently discards exceptions (the `_stoppingToken` fix is an improvement but not a complete resolution), and the `Transient` lifetime for `SmtpEmailNotificationService` allocates a new TCP connection per email.
 
 ---
 
@@ -64,38 +66,109 @@ private static DailyExecution MapToDomain(DailyExecutionRow row)
 
 ---
 
-### 2. `SmtpClient` Is Deprecated
+## ✅ Architectural Strengths
 
-`System.Net.Mail.SmtpClient` is annotated with `[Obsolete]` in .NET 6+ and the documentation recommends `MailKit` / `MimeKit`. While this does not cause runtime errors today, it will generate compiler warnings and is on the deprecation path.
+1. **Parameterized Queries via `CommandDefinition`** — All repositories use Dapper's `CommandDefinition` with anonymous objects. No SQL injection vectors identified.
+
+2. **Transaction Scoping in `HealthMonitorDefinitionRepository`** — `UpsertAsync` and `DeleteAsync` are wrapped in explicit `BeginTransaction` / `Commit` / `Rollback` blocks.
+
+3. **`[DisallowConcurrentExecution]` on Quartz Jobs** — `DataRetentionJob` and `AggregateHealthEvaluationJob` prevent overlapping executions.
+
+4. **Exponential Backoff in `ZeroMQSubscriberService`** — Reconnection delay doubles from 1 s to a 60 s ceiling.
+
+5. **HTML Encoding in Email Templates** — `Encode()` calls `WebUtility.HtmlEncode()` on all user-controlled values — no XSS in email clients.
+
+6. **`MailKit` Replaces Deprecated `SmtpClient`** — `SmtpEmailNotificationService` now uses `MailKit.Net.Smtp.SmtpClient` + `MimeMessage`, eliminating the `[Obsolete]` warning and enabling modern TLS/OAuth flows.
+
+7. **`HeartbeatTimeoutMonitor` Dual-Role Pattern** — A single instance shared across DI via `AddSingleton` forwarding, with `_stoppingToken` captured from `ExecuteAsync` so timer callbacks respect graceful shutdown.
+
+8. **`Rehydrate()` Factory Eliminates All Reflection** — `DailyExecution.Rehydrate()` and `ComponentState.Rehydrate()` are used by all repositories — no `SetPrivateProperty` or `AppendToPrivateList` reflection helpers remain.
 
 ---
 
-### 3. Fire-and-Forget in `HeartbeatTimeoutMonitor.OnTimerFired`
+## ⚠️ Remaining Violations
+
+### 1. `HeartbeatTimeoutMonitor.OnTimerFired` Still Silently Swallows Exceptions
+
+`_stoppingToken` is now correctly passed, but the task result is still discarded:
 
 ```csharp
 private void OnTimerFired(object? state)
 {
-    _ = RaiseComponentLostAsync(entry, CancellationToken.None); // ❌ fire-and-forget
+    _ = Task.Run(
+        () => RaiseComponentLostAsync(entry, _stoppingToken),
+        _stoppingToken);
+    // ❌ Any exception thrown by RaiseComponentLostAsync is silently swallowed
 }
 ```
 
-The discarded task runs `IDomainEventDispatcher.DispatchAsync` inside a DI scope created **after the host's `CancellationToken` is set**. If the host is shutting down, this scope may be disposed mid-flight, causing `ObjectDisposedException` that is swallowed silently.
-
-Additionally, `CancellationToken.None` means shutdown cancellation is never respected in the `RaiseComponentLostAsync` path.
+**Impact**: If `IDomainEventDispatcher.DispatchAsync` throws (e.g., `ObjectDisposedException` on shutdown), the failure is never logged. A component-lost event may be silently dropped.
 
 ---
 
-### 4. Inconsistent `IDbConnection` Open State Across Repositories
+### 2. Inconsistent `IDbConnection` Open State Across Repositories
 
-Some repositories call `conn.Open()` explicitly before issuing queries (e.g., `HealthMonitorDefinitionRepository`, `MonitoredSystemRepository`); others rely on Dapper to open the connection lazily (e.g., `AlertRecordRepository`, `ComponentStateRepository`). This inconsistency is harmless today (Dapper handles both cases) but signals that there is no enforced convention, creating maintenance risk.
+Some repositories call `conn.Open()` explicitly; others rely on Dapper's lazy-open. Harmless today but signals the absence of a documented convention.
 
 ---
 
-### 5. `SmtpEmailNotificationService` Registered as `Transient`
+### 3. `SmtpEmailNotificationService` Registered as `Transient`
+
+A new `MailKit.SmtpClient` TCP connection is allocated per email send. Under an alert burst, this creates connection overhead. `Scoped` or a `Singleton` with proper connection management would be more efficient.
+
+---
+
+## 💡 Refactoring Suggestions
+
+1. **Add exception logging inside the `Task.Run` lambda** — Wrap `RaiseComponentLostAsync` in a `try/catch` that logs at `Error` level. Swallowing `OperationCanceledException` from `_stoppingToken` is acceptable; all other exceptions should be logged.
+
+2. **Standardize connection opening** — Choose one convention (always explicit `conn.Open()` or always lazy-open) and document it with a comment in `IDbConnectionFactory`. Consistency prevents confusion in code reviews.
+
+3. **Consider `Scoped` for `SmtpEmailNotificationService`** — A scoped lifetime amortizes connection cost across a single request/job unit, which is sufficient for the alert use-case.
+
+---
+
+## 📝 Implementation Example
+
+### Before — Fire-and-Forget Without Exception Handling
 
 ```csharp
-services.AddTransient<IEmailNotificationService, SmtpEmailNotificationService>();
+private void OnTimerFired(object? state)
+{
+    _ = Task.Run(
+        () => RaiseComponentLostAsync(entry, _stoppingToken),
+        _stoppingToken);
+}
 ```
+
+### After — Fire-and-Forget With Logged Exception
+
+```csharp
+private void OnTimerFired(object? state)
+{
+    if (state is not TimerEntry entry) return;
+
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await RaiseComponentLostAsync(entry, _stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected during host shutdown — no action required.
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "HeartbeatTimeoutMonitor: unhandled exception raising ComponentLost for {ComponentId}.",
+                entry.ComponentId);
+        }
+    }, _stoppingToken);
+}
+```
+
+---
 
 A new `SmtpClient` instance (and its underlying TCP state) is allocated for every email send. The `using` ensures disposal, but for high-frequency scenarios (rapid alerts) this is wasteful. The Application layer's `TryAddSingleton` stub is already overridden by this `AddTransient`, so the lifetime choice is uncontested but suboptimal.
 
