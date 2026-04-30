@@ -98,7 +98,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.Configure<SmtpOptions>(opts =>
             configuration.GetSection(SmtpOptions.SectionName).Bind(opts));
 
-        services.AddTransient<IEmailNotificationService, SmtpEmailNotificationService>();
+        services.AddSingleton<IEmailNotificationService, SmtpEmailNotificationService>();
         services.AddHttpClient<ITeamsNotificationService, TeamsNotificationService>();
 
         return services;

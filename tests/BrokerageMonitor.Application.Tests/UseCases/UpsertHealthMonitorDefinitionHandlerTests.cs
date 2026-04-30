@@ -84,7 +84,7 @@ public sealed class UpsertHealthMonitorDefinitionHandlerTests
             WatchedComponents: [new WatchedComponent("COMP-01", ComponentType.Service)],
             EmailRecipients: ["test@example.com"],
             TeamsWebhookUrl: null,
-            SendOnFailure: true);
+            NotificationsEnabled: true);
 
     [TestMethod]
     public async Task HandleAsync_NewDefinition_SchedulesJob()

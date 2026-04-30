@@ -46,7 +46,8 @@ public sealed class DailyExecution
         string systemId,
         DateOnly executionDate,
         DailyExecutionStatus initialStatus = DailyExecutionStatus.InProgress,
-        string? missedReason = null)
+        string? missedReason = null,
+        DateTimeOffset? createdAt = null)
     {
         if (executionId == Guid.Empty)
             throw new ArgumentException("ExecutionId cannot be empty.", nameof(executionId));
@@ -62,7 +63,7 @@ public sealed class DailyExecution
         SystemId = systemId;
         ExecutionDate = executionDate;
         Status = initialStatus;
-        CreatedAt = DateTimeOffset.UtcNow;
+        CreatedAt = createdAt ?? DateTimeOffset.UtcNow;
         MissedReason = missedReason;
     }
 

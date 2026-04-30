@@ -41,14 +41,17 @@ public sealed class ComponentState
             _subIndicators.AddRange(subIndicators);
     }
 
-    public ComponentState(string componentId, ComponentStatus initialStatus = ComponentStatus.Unknown)
+    public ComponentState(
+        string componentId,
+        ComponentStatus initialStatus = ComponentStatus.Unknown,
+        DateTimeOffset? changedAt = null)
     {
         if (string.IsNullOrWhiteSpace(componentId))
             throw new ArgumentException("ComponentId cannot be empty.", nameof(componentId));
 
         ComponentId = componentId;
         Status = initialStatus;
-        LastStatusChangedAt = DateTimeOffset.UtcNow;
+        LastStatusChangedAt = changedAt ?? DateTimeOffset.UtcNow;
     }
 
     /// <summary>

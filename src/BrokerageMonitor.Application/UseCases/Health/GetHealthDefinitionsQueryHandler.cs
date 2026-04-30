@@ -90,7 +90,7 @@ public sealed class GetHealthDefinitionsQueryHandler
                 watchedDtos,
                 definition.EmailRecipients.Select(e => e.Value).ToList(),
                 definition.TeamsWebhookUrl,
-                definition.SendOnFailure,
+                definition.NotificationsEnabled,
                 definition.IsActive,
                 executionDto));
         }

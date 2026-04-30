@@ -21,7 +21,7 @@ public sealed record UpsertHealthMonitorDefinitionCommand(
     IReadOnlyList<WatchedComponent> WatchedComponents,
     IReadOnlyList<string> EmailRecipients,
     string? TeamsWebhookUrl,
-    bool SendOnFailure);
+    bool NotificationsEnabled);
 
 /// <summary>
 /// Handles <see cref="UpsertHealthMonitorDefinitionCommand"/>.
@@ -77,7 +77,7 @@ public sealed class UpsertHealthMonitorDefinitionHandler
                 existing.SetWatchedComponents(command.WatchedComponents);
                 existing.SetEmailRecipients(emailRecipients);
                 existing.SetTeamsWebhookUrl(command.TeamsWebhookUrl);
-                existing.SetSendOnFailure(command.SendOnFailure);
+                existing.SetNotificationsEnabled(command.NotificationsEnabled);
 
                 await _definitionRepo.UpsertAsync(existing, ct).ConfigureAwait(false);
                 await _jobScheduler.ScheduleOrRescheduleAsync(existing.DefinitionId, existing.DeadlineTime, ct).ConfigureAwait(false);
@@ -101,7 +101,7 @@ public sealed class UpsertHealthMonitorDefinitionHandler
             command.WatchedComponents,
             emailRecipients,
             command.TeamsWebhookUrl,
-            command.SendOnFailure);
+            command.NotificationsEnabled);
 
         await _definitionRepo.UpsertAsync(definition, ct).ConfigureAwait(false);
         await _jobScheduler.ScheduleOrRescheduleAsync(definition.DefinitionId, definition.DeadlineTime, ct).ConfigureAwait(false);

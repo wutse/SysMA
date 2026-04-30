@@ -242,10 +242,10 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
         DateTimeOffset? notificationSentAt = null;
         var notificationType = TerminalStatusToNotificationType(terminalStatus);
 
-        // Send notifications when SendOnFailure = true and execution is not Exempted.
+        // Send notifications when NotificationsEnabled = true and execution is not Exempted.
         // Success and Failed are treated symmetrically — the flag controls whether any
         // notification channel is triggered, not just the failure channel.
-        if (terminalStatus != DailyExecutionStatus.Exempted && definition.SendOnFailure)
+        if (terminalStatus != DailyExecutionStatus.Exempted && definition.NotificationsEnabled)
         {
             notificationSentAt = await SendNotificationsAsync(execution, definition, system, failedComponents, ct)
                 .ConfigureAwait(false);
@@ -259,7 +259,7 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
             notificationSentAt,
             ct).ConfigureAwait(false);
 
-        // FR-020: NotificationInbox always written, regardless of SendOnFailure
+        // FR-020: NotificationInbox always written, regardless of NotificationsEnabled
         await WriteInboxItemAsync(execution, definition, notificationType, ct).ConfigureAwait(false);
 
         _logger.LogInformation(

@@ -17,7 +17,7 @@ public sealed record HealthMonitorDefinitionDto(
     IReadOnlyList<WatchedComponentDto> WatchedComponents,
     IReadOnlyList<string> EmailRecipients,
     string? TeamsWebhookUrl,
-    bool SendOnFailure,
+    bool NotificationsEnabled,
     bool IsActive,
     DailyExecutionDto? TodayExecution);
 

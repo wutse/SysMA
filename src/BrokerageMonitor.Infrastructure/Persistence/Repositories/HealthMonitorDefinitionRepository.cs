@@ -94,7 +94,7 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
                 EmailRecipients = JsonSerializer.Serialize(
                     definition.EmailRecipients.Select(e => e.Value)),
                 definition.TeamsWebhookUrl,
-                SendOnFailure   = definition.SendOnFailure ? 1 : 0,
+                SendOnFailure   = definition.NotificationsEnabled ? 1 : 0,
                 IsActive        = definition.IsActive ? 1 : 0
             }, transaction: tx, cancellationToken: ct));
 
@@ -204,8 +204,8 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
             watchedComponents,
             recipients,
             row.TeamsWebhookUrl,
-            row.SendOnFailure == 1,
-            row.IsActive == 1);
+            notificationsEnabled: row.SendOnFailure == 1,
+            isActive: row.IsActive == 1);
     }
 
     private sealed record DefinitionRow(

@@ -20,7 +20,7 @@ public interface IAggregateHealthEvaluationService
     /// Called at deadline time for a specific definition.
     /// Evaluates all watched components using BI-008 criteria, transitions the
     /// <c>DailyExecution</c> to its terminal state (Success/Failed/Exempted),
-    /// sends notifications according to <c>SendOnFailure</c>, and writes a
+    /// sends notifications according to <c>NotificationsEnabled</c>, and writes a
     /// <c>NotificationInboxItem</c> regardless (FR-020).
     /// FR-014, FR-016, FR-045, BI-006, BI-008, BI-013.
     /// </summary>

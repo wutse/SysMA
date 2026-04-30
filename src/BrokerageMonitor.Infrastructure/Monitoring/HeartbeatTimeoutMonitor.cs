@@ -173,9 +173,17 @@ public sealed class HeartbeatTimeoutMonitor : BackgroundService, IHeartbeatTimer
 
         // Timer callback is synchronous; schedule the async work on the thread pool
         // using the host's stopping token so in-flight work respects graceful shutdown.
-        _ = Task.Run(
-            () => RaiseComponentLostAsync(entry, _stoppingToken),
-            _stoppingToken);
+        // ContinueWith ensures any unhandled exception that escapes RaiseComponentLostAsync
+        // is logged rather than silently swallowed.
+        Task.Run(() => RaiseComponentLostAsync(entry, _stoppingToken), _stoppingToken)
+            .ContinueWith(
+                t => _logger.LogError(
+                    t.Exception,
+                    "HeartbeatTimeoutMonitor: unhandled error in timer callback for component {ComponentId}.",
+                    entry.ComponentId),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
     }
 
     private async Task RaiseComponentLostAsync(TimerEntry entry, CancellationToken ct)
