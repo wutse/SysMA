@@ -1,26 +1,27 @@
 # BrokerageMonitor.Application — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-25 _(previous: 2026-04-24)_
+> **Date**: 2026-05-01 _(previous: 2026-04-25)_
 > **Layer**: Application (depends on Domain only)
 
 ### Δ Changes Since Previous Review
 
-| #   | Issue                                                                                     | Status            |
-| --- | ----------------------------------------------------------------------------------------- | ----------------- |
-| 1   | `ComponentStateOverridden` not dispatched to `AlertEvaluationService`                     | ✅ **FIXED**       |
-| 2   | Cache invalidation gap (`ToggleMaintenanceModeHandler` / `OverrideComponentStateHandler`) | ✅ **FIXED**       |
-| 3   | N+1 dashboard query (2N+1 per refresh)                                                    | ✅ **FIXED**       |
-| 4   | Synthetic `PreviousStatus = Unknown` for `ComponentLost`                                  | ✅ **FIXED**       |
-| 5   | `FinalizeExecutionAsync` sends success notifications when `SendOnFailure = false`         | ✅ **FIXED**       |
-| 6   | `AppSettingsImporter` — locale-sensitive `TimeOnly.Parse()`                               | ✅ **FIXED**       |
-| —   | `SendOnFailure` naming/semantic ambiguity                                                 | 🟡 **NEW (minor)** |
+| #   | Issue                                                                   | Status                                                     |
+| --- | ----------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 1   | `ComponentStateOverridden` not dispatched to `AlertEvaluationService`   | ✅ **FIXED** (previous review)                              |
+| 2   | Cache invalidation gap in both operator handlers                        | ✅ **FIXED** (previous review)                              |
+| 3   | N+1 dashboard query (2N+1 per refresh)                                  | ✅ **FIXED** (previous review)                              |
+| 4   | Synthetic `PreviousStatus = Unknown` for `ComponentLost`                | ✅ **FIXED** (previous review)                              |
+| 5   | `FinalizeExecutionAsync` sends success notifications when flag is false | ✅ **FIXED** (previous review)                              |
+| 6   | `AppSettingsImporter` locale-sensitive `TimeOnly.Parse()`               | ✅ **FIXED** (previous review)                              |
+| 7   | `SendOnFailure` naming/semantic ambiguity                               | ✅ **FIXED** — renamed to `NotificationsEnabled`            |
+| —   | `GetAllActiveAsync` called on every `ComponentStatusChanged` event      | 🟡 **NEW** — hot-path N+1 in `UpdateComponentProgressAsync` |
 
 ---
 
 ## 📊 Architecture Health Score: 8.5 / 10
 
-The Application layer is in strong shape. All critical violations from the previous review have been resolved: the `ComponentStateOverridden` event is now dispatched to `AlertEvaluationService`, both operator handlers correctly invalidate the state cache, the dashboard uses 3 batch queries instead of 2N+1, `ComponentLost` synthesizes accurate `PreviousStatus` from the cache, and `FinalizeExecutionAsync` correctly guards notifications behind `SendOnFailure`. The sole remaining concern is a naming ambiguity on the `SendOnFailure` flag.
+All previous violations are now resolved, including the `SendOnFailure` → `NotificationsEnabled` rename. One new performance concern is identified: `UpdateComponentProgressAsync` calls `GetAllActiveAsync()` on every single `ComponentStatusChanged` event, loading every active definition from SQLite and then filtering in memory. Under high-frequency heartbeat activity this is a hot-path N+1.
 
 ---
 
@@ -42,44 +43,86 @@ The Application layer is in strong shape. All critical violations from the previ
 
 ## ⚠️ Remaining Violation
 
-### 1. `SendOnFailure` Flag Name Does Not Match Actual Semantics
+### 1. Hot-Path N+1 in `UpdateComponentProgressAsync`
 
-The implementation sends notifications for **both** `Success` and `Failed` when `SendOnFailure = true`, and for **neither** when `false`. The flag name implies "send only on failure":
+On every `ComponentStatusChanged` event, the service loads **all** active definitions from SQLite, then filters in memory:
 
 ```csharp
-// FinalizeExecutionAsync — current behaviour
-if (terminalStatus != DailyExecutionStatus.Exempted && definition.SendOnFailure)
+// AggregateHealthEvaluationService.cs — current
+public async Task UpdateComponentProgressAsync(ComponentStatusChanged evt, ...)
 {
-    // ✅ correct: no notifications when false
-    // ⚠️  name implies failure-only, but Success notifications also go out when true
-    notificationSentAt = await SendNotificationsAsync(...);
+    var definitions = await _definitionRepo.GetAllActiveAsync(ct); // ❌ full table scan per event
+    var watchingDefinitions = definitions
+        .Where(d => d.WatchedComponents.Any(w => w.ComponentId == evt.ComponentId))
+        .ToList();
+    ...
 }
 ```
 
-**Impact**: Low risk now (behaviour is consistent and documented in code comments), but the flag name will confuse future maintainers configuring definitions — a definition named `SendOnFailure = false` silently suppresses success notifications too.
+**Impact**: In a production environment with 20 systems × 10 components each, a burst of 200 heartbeats per second means 200 `GetAllActiveAsync` calls per second, each returning all 20+ definitions and their junction rows. Under normal operating conditions the definitions table is small and SQLite is fast, but this pattern will not scale and obscures the intent.
 
-**Fix**: Rename `SendOnFailure` → `NotificationsEnabled` across the domain, repositories, and UI, or add a companion `SendOnSuccess` bool.
-
----
-
-## 💡 Refactoring Suggestion
+**Fix**: Add a targeted query to `IHealthMonitorDefinitionRepository` and implement it in the repository:
 
 ```csharp
-// HealthMonitorDefinition.cs (proposed — no logic change, only naming)
-public bool NotificationsEnabled { get; private set; }  // replaces SendOnFailure
+// IHealthMonitorDefinitionRepository.cs (proposed addition)
+Task<IReadOnlyList<HealthMonitorDefinition>> GetByWatchedComponentAsync(
+    string componentId, CancellationToken ct = default);
+```
 
-// FinalizeExecutionAsync: semantics unchanged, intent clearer
-if (terminalStatus != DailyExecutionStatus.Exempted && definition.NotificationsEnabled)
-{
-    notificationSentAt = await SendNotificationsAsync(...);
-}
+```csharp
+// AggregateHealthEvaluationService.cs (proposed)
+var watchingDefinitions = await _definitionRepo
+    .GetByWatchedComponentAsync(evt.ComponentId, ct)
+    .ConfigureAwait(false);
+
+if (watchingDefinitions.Count == 0)
+    return;
+```
+
+The SQL implementation is a single join:
+
+```sql
+SELECT hmd.* FROM HealthMonitorDefinitions hmd
+INNER JOIN HealthMonitorWatchedComponents w ON w.DefinitionId = hmd.DefinitionId
+WHERE hmd.IsActive = 1 AND w.ComponentId = @ComponentId
 ```
 
 ---
 
-## 📝 Implementation Example — Before vs After (Fixed Violations for Reference)
+## 💡 Refactoring Suggestion — `NotificationsEnabled` (Already Applied)
 
-### Before — N+1 Dashboard Query (FIXED)
+The `SendOnFailure` flag has been renamed `NotificationsEnabled` in the domain model. The DB column retains the legacy name `SendOnFailure` as a persistence detail — this is acceptable for SQLite but should be documented in the repository mapping.
+
+---
+
+## 📝 Implementation Example — Before vs After
+
+### Before — Full Table Scan on Every Event (current)
+
+```csharp
+// AggregateHealthEvaluationService.cs
+var definitions = await _definitionRepo.GetAllActiveAsync(ct);      // ❌ full scan
+var watchingDefinitions = definitions
+    .Where(d => d.WatchedComponents.Any(w => w.ComponentId == evt.ComponentId))
+    .ToList();
+```
+
+### After — Targeted Repository Query (proposed)
+
+```csharp
+// AggregateHealthEvaluationService.cs
+var watchingDefinitions = await _definitionRepo
+    .GetByWatchedComponentAsync(evt.ComponentId, ct);               // ✅ index-backed JOIN
+
+if (watchingDefinitions.Count == 0)
+    return;
+```
+
+---
+
+## 📝 Fixed Violation Reference — Before vs After
+
+### Before — N+1 Dashboard Query (FIXED, previous review)
 
 ```csharp
 // GetDashboardQueryHandler.cs (previous)

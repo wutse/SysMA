@@ -1,25 +1,25 @@
 # BrokerageMonitor.Domain — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-25 _(previous: 2026-04-24)_
+> **Date**: 2026-05-01 _(previous: 2026-04-25)_
 > **Layer**: Domain (innermost — no project references)
 
 ### Δ Changes Since Previous Review
 
-| #   | Issue                                             | Status           |
-| --- | ------------------------------------------------- | ---------------- |
-| 1   | Value objects missing `IEquatable<T>`             | ✅ **FIXED**      |
-| 2   | `AlertRecord.Acknowledge()` allows overwriting    | ✅ **FIXED**      |
-| 3   | `HealthRuleSchedule.MatchesCron()` fragile parser | ✅ **FIXED**      |
-| 4   | Read models in `Repositories/` folder             | ✅ **FIXED**      |
-| 5   | `ComponentState.Rehydrate()` missing              | ✅ **FIXED**      |
-| 6   | Non-deterministic public constructors             | 🟡 **STILL OPEN** |
+| #   | Issue                                             | Status                                               |
+| --- | ------------------------------------------------- | ---------------------------------------------------- |
+| 1   | Value objects missing `IEquatable<T>`             | ✅ **FIXED** (previous review)                        |
+| 2   | `AlertRecord.Acknowledge()` allows overwriting    | ✅ **FIXED** (previous review)                        |
+| 3   | `HealthRuleSchedule.MatchesCron()` fragile parser | ✅ **FIXED** (previous review)                        |
+| 4   | Read models in `Repositories/` folder             | ✅ **FIXED** (previous review)                        |
+| 5   | `ComponentState.Rehydrate()` missing              | ✅ **FIXED** (previous review)                        |
+| 6   | Non-deterministic public constructors             | ✅ **FIXED** — optional timestamp parameters accepted |
 
 ---
 
-## 📊 Architecture Health Score: 8.5 / 10
+## 📊 Architecture Health Score: 9.0 / 10
 
-The Domain layer is now in excellent shape. All previous violations have been resolved: value objects implement `IEquatable<T>`, `AlertRecord.Acknowledge()` guards against double-acknowledgment, `MatchesCron()` uses safe parsing with a documented intent for 3-of-5 field matching, read models are correctly placed in `ReadModels/`, and `Rehydrate()` factories exist on `ComponentState` and `DailyExecution` for deterministic DB hydration. The only remaining concern is that the public constructors of `ComponentState` and `DailyExecution` still capture `DateTimeOffset.UtcNow` directly, which affects unit test precision.
+The Domain layer is in excellent shape. All previously identified violations have been resolved. The final open concern — non-deterministic `UtcNow` capture in public constructors — is now addressed: both `ComponentState` and `DailyExecution` accept optional `DateTimeOffset?` parameters that default to `UtcNow`, giving tests full timestamp control. No new violations identified.
 
 ---
 
@@ -47,53 +47,59 @@ The Domain layer is now in excellent shape. All previous violations have been re
 
 ---
 
-## ⚠️ Remaining Violation
+## ✅ No Open Violations
 
-### 1. Non-Deterministic Public Constructors Impede Unit Testing
+All previously identified violations have been resolved. The Domain layer has no remaining architectural concerns.
 
-The public constructors of `ComponentState` and `DailyExecution` still capture `DateTimeOffset.UtcNow` internally:
+---
+
+## 💡 Observation — Cron Matching Tied to Local Time Zone
+
+`DailyExecutionCreatorService.CreateForDateAsync` and `RecoverTodayAsync` use `DateTime.Today` (local time) to derive the current date, while `HealthRuleSchedule.IsMatch(date)` operates on a `DateOnly`. In a UTC-hosted environment these will agree, but in production environments with a non-UTC server time zone the "today" fed to `IsMatch` could be the wrong calendar day relative to the trading session. Consider capturing date context via a clock abstraction or at minimum documenting the assumed time zone in the service.
+
+---
+
+## 📝 Fixed Violation Reference — Before vs After
+
+### Before — Non-Deterministic Constructors (FIXED)
 
 ```csharp
-// ComponentState.cs
+// ComponentState.cs (previous)
 public ComponentState(string componentId, ComponentStatus initialStatus = ComponentStatus.Unknown)
 {
-    // ...
     LastStatusChangedAt = DateTimeOffset.UtcNow; // ❌ non-deterministic
 }
 
-// DailyExecution.cs
-public DailyExecution(Guid executionId, Guid definitionId, string systemId, DateOnly executionDate, ...)
+// DailyExecution.cs (previous)
+public DailyExecution(Guid executionId, ...)
 {
-    // ...
     CreatedAt = DateTimeOffset.UtcNow; // ❌ non-deterministic
 }
 ```
 
-**Impact**: Unit tests cannot assert exact `CreatedAt` / `LastStatusChangedAt` values when constructing entities directly. The `Rehydrate()` factory mitigates this for DB loads, but any test creating a new `DailyExecution` or `ComponentState` to verify timestamp behavior must work around the non-determinism.
-
----
-
-## 💡 Refactoring Suggestion
-
-Accept the timestamp as an optional constructor parameter, defaulting to `DateTimeOffset.UtcNow` at the call site:
+### After — Optional Timestamp Parameter (current)
 
 ```csharp
-// DailyExecution.cs (proposed)
+// ComponentState.cs (current)
+public ComponentState(
+    string componentId,
+    ComponentStatus initialStatus = ComponentStatus.Unknown,
+    DateTimeOffset? changedAt = null)   // ✅ tests pass a fixed value
+{
+    LastStatusChangedAt = changedAt ?? DateTimeOffset.UtcNow;
+}
+
+// DailyExecution.cs (current)
 public DailyExecution(
-    Guid executionId,
-    Guid definitionId,
-    string systemId,
+    Guid executionId, Guid definitionId, string systemId,
     DateOnly executionDate,
     DailyExecutionStatus initialStatus = DailyExecutionStatus.InProgress,
     string? missedReason = null,
-    DateTimeOffset? createdAt = null)   // ✅ injected; callers pass UtcNow; tests pass a fixed value
+    DateTimeOffset? createdAt = null)   // ✅ tests pass a fixed value
 {
-    // ...
     CreatedAt = createdAt ?? DateTimeOffset.UtcNow;
 }
 ```
-
-This is a backward-compatible, zero-friction change — no callers need to update unless they want deterministic tests.
 
 ---
 

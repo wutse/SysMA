@@ -1,6 +1,6 @@
 # BrokerageMonitor — Architecture Review Summary
 
-> **Reviewed**: 2026-04-25 _(previous: 2026-04-24)_
+> **Reviewed**: 2026-05-01 _(previous: 2026-04-25)_
 > **Reviewer**: Chief Software Architect
 > **Methodology**: Bottom-up dependency order — Domain → Application → Infrastructure → MailAgent → Web
 
@@ -8,48 +8,43 @@
 
 ## Health Scores
 
-| Project            | Previous | Current  | Delta | Key Remaining Risk                                                         |
-| ------------------ | -------- | -------- | ----- | -------------------------------------------------------------------------- |
-| **Domain**         | 7.5 / 10 | 8.5 / 10 | ▲ 1.0 | Non-deterministic public constructors (`ComponentState`, `DailyExecution`) |
-| **Application**    | 7.0 / 10 | 8.5 / 10 | ▲ 1.5 | `SendOnFailure` flag naming ambiguous; minor                               |
-| **Infrastructure** | 7.0 / 10 | 8.0 / 10 | ▲ 1.0 | Timer fire-and-forget still swallows exceptions; `Transient` SmtpService   |
-| **MailAgent**      | 7.5 / 10 | 9.0 / 10 | ▲ 1.5 | No open violations                                                         |
-| **Web**            | 7.5 / 10 | 9.0 / 10 | ▲ 1.5 | No open violations                                                         |
+| Project            | Previous | Current  | Delta | Key Remaining Risk                                                           |
+| ------------------ | -------- | -------- | ----- | ---------------------------------------------------------------------------- |
+| **Domain**         | 8.5 / 10 | 9.0 / 10 | ▲ 0.5 | Local-time `DateTime.Today` in scheduling path (time zone edge case)         |
+| **Application**    | 8.5 / 10 | 8.5 / 10 | —     | `GetAllActiveAsync` called on every `ComponentStatusChanged` event (hot N+1) |
+| **Infrastructure** | 8.0 / 10 | 9.5 / 10 | ▲ 1.5 | Inconsistent `IDbConnection` open convention across repositories             |
+| **MailAgent**      | 9.0 / 10 | 9.0 / 10 | —     | No open violations                                                           |
+| **Web**            | 9.0 / 10 | 7.5 / 10 | ▼ 1.5 | **8 direct repository injections across 5 pages** — Dependency Rule violated |
 
 ---
 
-## ✅ Fixed Since Previous Review (2026-04-24)
+## ✅ Fixed Since Previous Review (2026-04-25)
 
-| #   | Where                                         | What                                                                                                                                                                                 |
-| --- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| F1  | **Application / DomainEventDispatcher**       | `ComponentStateOverridden` case added — `AlertEvaluationService` is now called on manual state overrides. Active alerts correctly cleared/raised.                                    |
-| F2  | **Application / Maintenance + StateOverride** | Both `ToggleMaintenanceModeHandler` and `OverrideComponentStateHandler` now call `_stateCache.SetState()` — dashboard no longer shows stale status.                                  |
-| F3  | **Application / Dashboard**                   | `GetDashboardQueryHandler` replaced per-system loop with 3 batch queries (`GetAllActiveAsync`, `GetAllActiveAsync`, `GetSystemsWithUnacknowledgedAlertAsync`).                       |
-| F4  | **Application / DomainEventDispatcher**       | `DispatchComponentLostAsync` now reads actual previous status from `_stateCache.GetState()` instead of hardcoding `Unknown`.                                                         |
-| F5  | **Application / FinalizeExecution**           | `FinalizeExecutionAsync` now gates notifications behind `definition.SendOnFailure` — success notifications no longer sent when the flag is `false`.                                  |
-| F6  | **Application / AppSettingsImporter**         | `TimeOnly.Parse()` now uses `CultureInfo.InvariantCulture` — locale-sensitive failure eliminated.                                                                                    |
-| F7  | **Domain / Value Objects**                    | All value objects (`EmailAddress`, `MarketSessionWindow`, `HealthRuleSchedule`, `MailParsingRule`, `MetricValue`, `SubIndicator`, `WatchedComponent`) now implement `IEquatable<T>`. |
-| F8  | **Domain / AlertRecord**                      | `AlertRecord.Acknowledge()` now throws `InvalidOperationException` on second call — audit integrity preserved.                                                                       |
-| F9  | **Domain / HealthRuleSchedule**               | `MatchesCron()` uses `int.TryParse` (no `FormatException`), step-divisor-zero guard added, and 3-of-5 field intent documented with comment.                                          |
-| F10 | **Domain / ReadModels**                       | `AuditLogEntry` and `ExecutionHistoryEntry` moved to `ReadModels/` folder — `Repositories/` contains only interface contracts.                                                       |
-| F11 | **Infrastructure / SmtpClient**               | `System.Net.Mail.SmtpClient` replaced with `MailKit` (`SmtpClient` + `MimeMessage`) — obsolete API eliminated.                                                                       |
-| F12 | **Infrastructure / HeartbeatTimeoutMonitor**  | `OnTimerFired` now passes `_stoppingToken` (stored from `ExecuteAsync`) to `Task.Run` — graceful shutdown is now respected.                                                          |
-| F13 | **Web / Quartz scheduling**                   | `UpsertHealthMonitorDefinitionHandler` calls `_jobScheduler.ScheduleOrRescheduleAsync()` on create/update — new definitions are evaluated without restart.                           |
-| F14 | **Web / Program.cs**                          | Startup orchestration extracted to `WebApplicationStartup` — Program.cs is now a clean top-level entry point.                                                                        |
-| F15 | **MailAgent / Email body**                    | `MailRelayWorker.TruncateBody()` caps body length at `MaxBodyCharacters` from options — unbounded memory pressure eliminated.                                                        |
-| F16 | **MailAgent / COM lifetime**                  | `OutlookMailReader.EnsureOutlookSession()` reuses a long-lived `_outlookApp`/`_outlookNs` pair — one COM instance per process lifetime.                                              |
-| F17 | **Domain / ComponentState**                   | `ComponentState.Rehydrate()` static factory added — repositories no longer rely on `UtcNow` for persistence hydration.                                                               |
+| #   | Where                                        | What                                                                                                                                        |
+| --- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | **Infrastructure / HeartbeatTimeoutMonitor** | `OnTimerFired` now attaches `.ContinueWith(OnlyOnFaulted)` — exceptions from `RaiseComponentLostAsync` are logged instead of silently lost. |
+| F2  | **Infrastructure / AddNotificationServices** | `SmtpEmailNotificationService` registered as `Singleton` — per-email TCP connection allocation eliminated.                                  |
+| F3  | **Application / HealthMonitorDefinition**    | `SendOnFailure` renamed to `NotificationsEnabled` in the domain model — semantic ambiguity removed.                                         |
+| F4  | **Domain / ComponentState**                  | Public constructor now accepts `DateTimeOffset? changedAt = null` — `LastStatusChangedAt = changedAt ?? UtcNow` gives tests full control.   |
+| F5  | **Domain / DailyExecution**                  | Public constructor now accepts `DateTimeOffset? createdAt = null` — `CreatedAt = createdAt ?? UtcNow` gives tests full control.             |
+
+---
+
+## 🔴 New Critical Violation
+
+| #   | Where   | What                                                                                                                                                                                                                                                                                                                                                                                              |
+| --- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C1  | **Web** | **Direct Domain repository injection in Blazor pages** — 8 `@inject` directives across 5 pages (`DashboardPage`, `AlertCenterPage`, `HealthDefinitionEditorPage`, `HealthManagementPage`, `HistoryPage`, `SystemManagementPage`) bypass the Application layer entirely, violating the Dependency Rule. Each repository usage must be replaced with a use-case handler or a new Application query. |
 
 ---
 
 ## 🟡 Remaining Violations (Open)
 
-| #   | Where              | What                                                                                                                                                                                          |
-| --- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Domain**         | `DailyExecution` and `ComponentState` public constructors still call `DateTimeOffset.UtcNow` internally — unit tests cannot assert exact `CreatedAt` / `LastStatusChangedAt` values.          |
-| 2   | **Infrastructure** | `HeartbeatTimeoutMonitor.OnTimerFired` still discards the `Task.Run` result (`_ = ...`) — exceptions thrown by `RaiseComponentLostAsync` are silently swallowed (not logged).                 |
-| 3   | **Infrastructure** | `SmtpEmailNotificationService` is registered as `Transient` — a new connection is allocated per email send; sub-optimal under alert bursts.                                                   |
-| 4   | **Application**    | `SendOnFailure` flag name implies "only on failure" but the implementation sends for both `Success` and `Failed` when `true`. Rename to `NotificationsEnabled` to match the actual semantics. |
+| #   | Where              | What                                                                                                                                                                                                                             |
+| --- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Application**    | `UpdateComponentProgressAsync` calls `GetAllActiveAsync()` for every `ComponentStatusChanged` event — full table scan on every heartbeat. Add `GetByWatchedComponentAsync(componentId)` to `IHealthMonitorDefinitionRepository`. |
+| 2   | **Infrastructure** | `IDbConnection` open convention is inconsistent — some repositories call `.Open()` explicitly, others rely on Dapper's lazy-open. Document or standardize.                                                                       |
+| 3   | **Web**            | Orphaned `@inject IMonitoredSystemRepository SystemRepository` in `DashboardPage.razor` — never referenced; remove the directive.                                                                                                |
 
 ---
 
@@ -57,8 +52,8 @@
 
 | File                                                                                   | Score    |
 | -------------------------------------------------------------------------------------- | -------- |
-| [BrokerageMonitor.Domain.review.md](BrokerageMonitor.Domain.review.md)                 | 8.5 / 10 |
+| [BrokerageMonitor.Domain.review.md](BrokerageMonitor.Domain.review.md)                 | 9.0 / 10 |
 | [BrokerageMonitor.Application.review.md](BrokerageMonitor.Application.review.md)       | 8.5 / 10 |
-| [BrokerageMonitor.Infrastructure.review.md](BrokerageMonitor.Infrastructure.review.md) | 8.0 / 10 |
+| [BrokerageMonitor.Infrastructure.review.md](BrokerageMonitor.Infrastructure.review.md) | 9.5 / 10 |
 | [BrokerageMonitor.MailAgent.review.md](BrokerageMonitor.MailAgent.review.md)           | 9.0 / 10 |
-| [BrokerageMonitor.Web.review.md](BrokerageMonitor.Web.review.md)                       | 9.0 / 10 |
+| [BrokerageMonitor.Web.review.md](BrokerageMonitor.Web.review.md)                       | 7.5 / 10 |

@@ -1,25 +1,25 @@
 # BrokerageMonitor.Infrastructure — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-25 _(previous: 2026-04-24)_
+> **Date**: 2026-05-01 _(previous: 2026-04-25)_
 > **Layer**: Infrastructure (depends on Domain + Application)
 
 ### Δ Changes Since Previous Review
 
-| #   | Issue                                                          | Status                                     |
-| --- | -------------------------------------------------------------- | ------------------------------------------ |
-| 1   | Reflection-based domain mutation in `DailyExecutionRepository` | ✅ **FIXED** (previous review)              |
-| 2   | `SmtpClient` deprecated                                        | ✅ **FIXED** — replaced with MailKit        |
-| 3   | Fire-and-forget in `OnTimerFired` — `CancellationToken.None`   | ✅ **IMPROVED** — now uses `_stoppingToken` |
-| 4   | Inconsistent `IDbConnection` open state                        | 🟡 **STILL OPEN**                           |
-| —   | Fire-and-forget still silently swallows exceptions             | 🟡 **NEW (minor)**                          |
-| —   | `SmtpEmailNotificationService` registered as `Transient`       | 🟡 **STILL OPEN**                           |
+| #   | Issue                                                          | Status                                                    |
+| --- | -------------------------------------------------------------- | --------------------------------------------------------- |
+| 1   | Reflection-based domain mutation in `DailyExecutionRepository` | ✅ **FIXED** (previous review)                             |
+| 2   | `SmtpClient` deprecated                                        | ✅ **FIXED** (previous review) — replaced with MailKit     |
+| 3   | Fire-and-forget `OnTimerFired` — `_stoppingToken` missing      | ✅ **FIXED** (previous review)                             |
+| 4   | Fire-and-forget silently swallows exceptions                   | ✅ **FIXED** — `.ContinueWith` logs `OnlyOnFaulted` errors |
+| 5   | `SmtpEmailNotificationService` registered as `Transient`       | ✅ **FIXED** — now registered as `Singleton`               |
+| —   | Inconsistent `IDbConnection` open state across repositories    | 🟡 **STILL OPEN** (low priority)                           |
 
 ---
 
-## 📊 Architecture Health Score: 8.0 / 10
+## 📊 Architecture Health Score: 9.5 / 10
 
-The Infrastructure layer is in good shape. `MailKit` replaces the deprecated `SmtpClient`, `HeartbeatTimeoutMonitor.OnTimerFired` now propagates the shutdown token, the `Rehydrate()` pattern eliminates all reflection-based domain mutation, and all repositories use parameterized queries. Two minor concerns remain: the fire-and-forget task in `OnTimerFired` still silently discards exceptions (the `_stoppingToken` fix is an improvement but not a complete resolution), and the `Transient` lifetime for `SmtpEmailNotificationService` allocates a new TCP connection per email.
+The two most important fixes this cycle are complete: `OnTimerFired` now logs any exception that escapes `RaiseComponentLostAsync` via a `.ContinueWith(OnlyOnFaulted)` continuation, and `SmtpEmailNotificationService` is registered as a `Singleton` to avoid per-email TCP connection allocation. The only remaining concern is the inconsistent connection-open pattern across repositories, which is low risk but could cause a confusing runtime error if a new repository forgets to open its connection.
 
 ---
 
@@ -86,215 +86,71 @@ private static DailyExecution MapToDomain(DailyExecutionRow row)
 
 ---
 
-## ⚠️ Remaining Violations
+## ⚠️ Remaining Violation
 
-### 1. `HeartbeatTimeoutMonitor.OnTimerFired` Still Silently Swallows Exceptions
+### 1. Inconsistent `IDbConnection` Open State Across Repositories
 
-`_stoppingToken` is now correctly passed, but the task result is still discarded:
+`AlertRecordRepository` and most repositories use Dapper's implicit lazy-open — connections returned by `CreateConnection()` are used immediately without calling `.Open()`. However, `HealthMonitorDefinitionRepository` explicitly casts to `SqliteConnection` and calls `conn.Open()` before executing queries:
 
 ```csharp
+// HealthMonitorDefinitionRepository.cs
+using var conn = (SqliteConnection)_factory.CreateConnection();
+conn.Open(); // ✅ explicit open
+```
+
+```csharp
+// AlertRecordRepository.cs
+using var conn = _factory.CreateConnection();
+// No .Open() — relies on Dapper's implicit open behaviour
+```
+
+**Impact**: Low risk today (Dapper handles both patterns), but inconsistency will mislead maintainers and creates a subtle trap if a new repository skips the open call in a path where Dapper's implicit open does not fire (e.g., raw `IDbCommand` usage).
+
+**Fix**: Standardize on explicit `conn.Open()` across all repositories, or document the lazy-open convention explicitly in a `DbConnectionFactory` XML comment.
+
+---
+
+## 💡 Refactoring Suggestion
+
+```csharp
+/// <summary>
+/// Creates and returns a <b>closed</b> <see cref="IDbConnection"/>.
+/// Dapper opens the connection automatically on first query execution.
+/// Callers that use raw IDbCommand must call <c>Open()</c> explicitly.
+/// </summary>
+public IDbConnection CreateConnection() => new SqliteConnection(_connectionString);
+```
+
+---
+
+## 📝 Fixed Violation Reference — Before vs After
+
+### Before — Fire-and-Forget Swallowed Exceptions (FIXED)
+
+```csharp
+// HeartbeatTimeoutMonitor.cs (previous)
 private void OnTimerFired(object? state)
 {
     _ = Task.Run(
         () => RaiseComponentLostAsync(entry, _stoppingToken),
         _stoppingToken);
-    // ❌ Any exception thrown by RaiseComponentLostAsync is silently swallowed
+    // ❌ Any exception from RaiseComponentLostAsync was silently discarded
 }
 ```
 
-**Impact**: If `IDomainEventDispatcher.DispatchAsync` throws (e.g., `ObjectDisposedException` on shutdown), the failure is never logged. A component-lost event may be silently dropped.
-
----
-
-### 2. Inconsistent `IDbConnection` Open State Across Repositories
-
-Some repositories call `conn.Open()` explicitly; others rely on Dapper's lazy-open. Harmless today but signals the absence of a documented convention.
-
----
-
-### 3. `SmtpEmailNotificationService` Registered as `Transient`
-
-A new `MailKit.SmtpClient` TCP connection is allocated per email send. Under an alert burst, this creates connection overhead. `Scoped` or a `Singleton` with proper connection management would be more efficient.
-
----
-
-## 💡 Refactoring Suggestions
-
-1. **Add exception logging inside the `Task.Run` lambda** — Wrap `RaiseComponentLostAsync` in a `try/catch` that logs at `Error` level. Swallowing `OperationCanceledException` from `_stoppingToken` is acceptable; all other exceptions should be logged.
-
-2. **Standardize connection opening** — Choose one convention (always explicit `conn.Open()` or always lazy-open) and document it with a comment in `IDbConnectionFactory`. Consistency prevents confusion in code reviews.
-
-3. **Consider `Scoped` for `SmtpEmailNotificationService`** — A scoped lifetime amortizes connection cost across a single request/job unit, which is sufficient for the alert use-case.
-
----
-
-## 📝 Implementation Example
-
-### Before — Fire-and-Forget Without Exception Handling
-
-```csharp
-private void OnTimerFired(object? state)
-{
-    _ = Task.Run(
-        () => RaiseComponentLostAsync(entry, _stoppingToken),
-        _stoppingToken);
-}
-```
-
-### After — Fire-and-Forget With Logged Exception
-
-```csharp
-private void OnTimerFired(object? state)
-{
-    if (state is not TimerEntry entry) return;
-
-    _ = Task.Run(async () =>
-    {
-        try
-        {
-            await RaiseComponentLostAsync(entry, _stoppingToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected during host shutdown — no action required.
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex,
-                "HeartbeatTimeoutMonitor: unhandled exception raising ComponentLost for {ComponentId}.",
-                entry.ComponentId);
-        }
-    }, _stoppingToken);
-}
-```
-
----
-
-A new `SmtpClient` instance (and its underlying TCP state) is allocated for every email send. The `using` ensures disposal, but for high-frequency scenarios (rapid alerts) this is wasteful. The Application layer's `TryAddSingleton` stub is already overridden by this `AddTransient`, so the lifetime choice is uncontested but suboptimal.
-
----
-
-## 💡 Refactoring Suggestions
-
-1. **Add a private rehydration constructor to `DailyExecution`** — Like the existing Dapper constructors on other aggregates, add a `private` constructor that accepts all persisted state directly. Remove `SetPrivateProperty` and `AppendToPrivateList` reflection helpers.
-
-2. **Replace `SmtpClient` with `MailKit`** — Add `MailKit` NuGet package, create `MailKitEmailService`, and register it in place of `SmtpEmailNotificationService`.
-
-3. **Capture a `CancellationToken` for shutdown in `OnTimerFired`** — Store the `ExecuteAsync` `stoppingToken` on the class. Pass it (or a linked token) to `RaiseComponentLostAsync`. Guard with `if (stoppingToken.IsCancellationRequested) return`.
-
-4. **Standardize connection opening** — Decide on one convention: either always call `conn.Open()` explicitly in the repository, or never call it (rely on Dapper). Document the convention in `IDbConnectionFactory`.
-
----
-
-## 📝 Implementation Examples
-
-### Before — Reflection Hack in `DailyExecutionRepository`
-
-```csharp
-// DailyExecutionRepository.cs (current)
-var execution = new DailyExecution(
-    Guid.Parse(row.ExecutionId), ...,
-    DailyExecutionStatus.InProgress,  // forced initial, then overwritten
-    row.MissedReason);
-
-SetPrivateProperty(execution, "CreatedAt",
-    DateTimeOffset.Parse(row.CreatedAt)); // ❌ reflection
-
-SetPrivateProperty(execution, "Status", status); // ❌ reflection
-AppendToPrivateList<string>(execution, "_completedComponents", items); // ❌ reflection
-```
-
-### After — Private Rehydration Constructor on Aggregate
-
-```csharp
-// DailyExecution.cs (proposed addition)
-// Private constructor for Dapper/repository rehydration
-private DailyExecution(
-    Guid executionId,
-    Guid definitionId,
-    string systemId,
-    DateOnly executionDate,
-    DateTimeOffset createdAt,
-    DailyExecutionStatus status,
-    DateTimeOffset? evaluatedAt,
-    DateTimeOffset? notificationSentAt,
-    string? missedReason,
-    IEnumerable<string> completedComponents,
-    IEnumerable<string> failedComponents)
-{
-    ExecutionId = executionId;
-    DefinitionId = definitionId;
-    SystemId = systemId;
-    ExecutionDate = executionDate;
-    CreatedAt = createdAt;
-    Status = status;
-    EvaluatedAt = evaluatedAt;
-    NotificationSentAt = notificationSentAt;
-    MissedReason = missedReason;
-    _completedComponents.AddRange(completedComponents);
-    _failedComponents.AddRange(failedComponents);
-}
-
-// DailyExecutionRepository.cs (proposed)
-private static DailyExecution MapToDomain(DailyExecutionRow row) =>
-    // Uses the new private constructor — no reflection needed ✅
-    DailyExecution.Rehydrate(
-        Guid.Parse(row.ExecutionId),
-        Guid.Parse(row.DefinitionId),
-        row.SystemId,
-        DateOnly.Parse(row.ExecutionDate),
-        DateTimeOffset.Parse(row.CreatedAt),
-        Enum.Parse<DailyExecutionStatus>(row.Status),
-        row.EvaluatedAt is not null ? DateTimeOffset.Parse(row.EvaluatedAt) : null,
-        row.NotificationSentAt is not null ? DateTimeOffset.Parse(row.NotificationSentAt) : null,
-        row.MissedReason,
-        row.CompletedComponentsJson is not null
-            ? JsonSerializer.Deserialize<string[]>(row.CompletedComponentsJson) ?? []
-            : [],
-        row.FailedComponentsJson is not null
-            ? JsonSerializer.Deserialize<string[]>(row.FailedComponentsJson) ?? []
-            : []);
-```
-
----
-
-### Before — Fire-and-Forget Timer Callback
+### After — Faulted Task Logged via `ContinueWith` (current)
 
 ```csharp
 // HeartbeatTimeoutMonitor.cs (current)
-private void OnTimerFired(object? state)
-{
-    _ = RaiseComponentLostAsync(entry, CancellationToken.None); // ❌
-}
-```
-
-### After — Tracked with Shutdown Awareness
-
-```csharp
-// HeartbeatTimeoutMonitor.cs (proposed)
-private CancellationToken _stoppingToken;
-
-protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-{
-    _stoppingToken = stoppingToken; // ✅ stored for timer callbacks
-    await LoadComponentsAsync(stoppingToken).ConfigureAwait(false);
-    await Task.Delay(Timeout.Infinite, stoppingToken)
-              .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-    foreach (var entry in _timers.Values) entry.Timer?.Dispose();
-    _timers.Clear();
-}
-
-private void OnTimerFired(object? state)
-{
-    if (state is not TimerEntry entry) return;
-    if (_stoppingToken.IsCancellationRequested) return; // ✅ respect shutdown
-
-    // Track the task to allow structured error handling
-    _ = RaiseComponentLostAsync(entry, _stoppingToken)
-        .ContinueWith(t =>
-            _logger.LogError(t.Exception, "RaiseComponentLostAsync faulted."),
-            TaskContinuationOptions.OnlyOnFaulted); // ✅ faults are not silently swallowed
-}
+Task.Run(() => RaiseComponentLostAsync(entry, _stoppingToken), _stoppingToken)
+    .ContinueWith(
+        t => _logger.LogError(
+            t.Exception,
+            "HeartbeatTimeoutMonitor: unhandled error in timer callback for component {ComponentId}.",
+            entry.ComponentId),
+        CancellationToken.None,
+        TaskContinuationOptions.OnlyOnFaulted,  // ✅ only fires on fault
+        TaskScheduler.Default);
 ```
 
 ---
@@ -322,7 +178,7 @@ graph LR
     end
 
     subgraph "Notifications"
-        SMTP["SmtpEmailNotificationService<br/>(Transient)"]
+        SMTP["SmtpEmailNotificationService<br/>(Singleton)"]
         Teams["TeamsNotificationService<br/>(HttpClient)"]
         SignalR["SignalRNotificationService<br/>(Singleton)"]
     end
