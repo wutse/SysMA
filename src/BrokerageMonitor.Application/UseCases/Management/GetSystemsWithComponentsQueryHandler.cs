@@ -24,18 +24,21 @@ public sealed class GetSystemsWithComponentsQueryHandler
                      IReadOnlyDictionary<string, IReadOnlyList<MonitoredComponent>> ComponentsBySystem)>
       HandleAsync(CancellationToken ct = default)
   {
+    // Two queries instead of N+1: load all systems, then load all components
+    // and group in-memory — O(M) instead of O(N) round-trips.
     var allSystems = (await _systemRepo.GetAllActiveAsync(ct).ConfigureAwait(false))
         .OrderBy(s => s.SystemId)
         .ToList();
 
-    var componentsBySystem = new Dictionary<string, IReadOnlyList<MonitoredComponent>>(
-        StringComparer.Ordinal);
+    var allComponents = await _componentRepo.GetAllActiveAsync(ct).ConfigureAwait(false);
 
-    foreach (var sys in allSystems)
-    {
-      var comps = await _componentRepo.GetBySystemIdAsync(sys.SystemId, ct).ConfigureAwait(false);
-      componentsBySystem[sys.SystemId] = comps.OrderBy(c => c.Name).ToList();
-    }
+    var componentsBySystem = allSystems.ToDictionary(
+        s => s.SystemId,
+        s => (IReadOnlyList<MonitoredComponent>)allComponents
+            .Where(c => c.SystemId == s.SystemId)
+            .OrderBy(c => c.Name)
+            .ToList(),
+        StringComparer.Ordinal);
 
     return (allSystems, componentsBySystem);
   }

@@ -37,7 +37,7 @@ public sealed class DatabaseInitializer
         foreach (var ddl in SchemaDdl)
             await ExecuteAsync(connection, ddl, cancellationToken);
 
-        await ApplyMigrationsAsync(connection, cancellationToken);
+        ApplyMigrations(connection, cancellationToken);
 
         _logger.LogInformation("DatabaseInitializer: schema initialisation completed successfully.");
     }
@@ -209,7 +209,7 @@ public sealed class DatabaseInitializer
     /// Applies idempotent column-rename migrations for existing databases.
     /// Safe to run on every startup.
     /// </summary>
-    private static Task ApplyMigrationsAsync(
+    private static void ApplyMigrations(
         System.Data.IDbConnection connection,
         CancellationToken cancellationToken)
     {
@@ -239,7 +239,5 @@ public sealed class DatabaseInitializer
                 "ALTER TABLE HealthMonitorDefinitions RENAME COLUMN SendOnFailure TO NotificationsEnabled;";
             renameCmd.ExecuteNonQuery();
         }
-
-        return Task.CompletedTask;
     }
 }

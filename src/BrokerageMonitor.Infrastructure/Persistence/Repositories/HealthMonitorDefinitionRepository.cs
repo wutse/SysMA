@@ -16,7 +16,6 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
     public async Task<HealthMonitorDefinition?> GetByIdAsync(Guid definitionId, CancellationToken ct = default)
     {
         using var conn = (SqliteConnection)_factory.CreateConnection();
-        conn.Open();
         var defId = definitionId.ToString();
 
         const string mainSql = "SELECT * FROM HealthMonitorDefinitions WHERE DefinitionId = @DefinitionId";
@@ -31,7 +30,6 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
     public async Task<IReadOnlyList<HealthMonitorDefinition>> GetAllActiveAsync(CancellationToken ct = default)
     {
         using var conn = (SqliteConnection)_factory.CreateConnection();
-        conn.Open();
 
         const string mainSql = "SELECT * FROM HealthMonitorDefinitions WHERE IsActive = 1";
         var rows = (await conn.QueryAsync<DefinitionRow>(
@@ -43,7 +41,6 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
     public async Task<IReadOnlyList<HealthMonitorDefinition>> GetBySystemIdAsync(string systemId, CancellationToken ct = default)
     {
         using var conn = (SqliteConnection)_factory.CreateConnection();
-        conn.Open();
 
         const string mainSql = "SELECT * FROM HealthMonitorDefinitions WHERE SystemId = @SystemId";
         var rows = (await conn.QueryAsync<DefinitionRow>(
@@ -58,7 +55,6 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
         // HealthDefinitionComponents is a junction table keyed by (DefinitionId, ComponentId).
         // Join to HealthMonitorDefinitions to get only active definitions watching this component.
         using var conn = (SqliteConnection)_factory.CreateConnection();
-        conn.Open();
 
         const string mainSql = """
             SELECT d.*
