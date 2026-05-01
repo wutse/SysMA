@@ -1,22 +1,23 @@
 # BrokerageMonitor.MailAgent — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-04-25 _(previous: 2026-04-24)_
+> **Date**: 2026-05-01 _(previous: 2026-04-25)_
 > **Layer**: MailAgent (standalone process — no project references to Domain/Application)
 
 ### Δ Changes Since Previous Review
 
-| #   | Issue                                         | Status                                                                           |
-| --- | --------------------------------------------- | -------------------------------------------------------------------------------- |
-| 1   | COM `Application` instance recreated per poll | ✅ **FIXED** — long-lived `_outlookApp`/`_outlookNs` via `EnsureOutlookSession()` |
-| 2   | Unbounded email body size in ZeroMQ frame     | ✅ **FIXED** — `TruncateBody()` caps at `MaxBodyCharacters` from options          |
-| 3   | Sync-over-async `GetAwaiter().GetResult()`    | 🟡 **BY DESIGN** — STA thread requirement; acceptable                             |
+| #   | Issue                                                           | Status                                                                            |
+| --- | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 1   | COM `Application` instance recreated per poll                   | ✅ **CONFIRMED FIXED** — `EnsureOutlookSession()` creates one long-lived instance  |
+| 2   | Unbounded email body size in ZeroMQ frame                       | ✅ **CONFIRMED FIXED** — `TruncateBody()` caps at `MaxBodyCharacters` from options |
+| 3   | Sync-over-async `GetAwaiter().GetResult()`                      | 🟡 **BY DESIGN** — STA thread requirement; acceptable                              |
+| —   | `PollAndPublishAsync` returns `Task.CompletedTask` (fake async) | 🟡 **BY DESIGN** — synchronous I/O path; acceptable given COM interop constraints  |
 
 ---
 
 ## 📊 Architecture Health Score: 9.0 / 10
 
-The MailAgent is in excellent shape. The two previously open concerns — recreating the COM `Application` instance each poll and unbounded ZeroMQ message sizes — have both been resolved. No critical or architectural violations remain. The sync-over-async pattern inside `ReadUnreadMails()` is an acknowledged trade-off for the Outlook STA requirement.
+No changes since the 2026-04-25 review. Source code confirms all previously reported fixes are in place: `EnsureOutlookSession()` correctly guards the long-lived `_outlookApp` / `_outlookNs` pair with a null-check (`if (_outlookApp is not null && _outlookNs is not null) return;`), and `TruncateBody()` enforces the `MaxBodyCharacters` cap from `MailAgentOptions`. No new violations identified.
 
 ---
 
@@ -38,22 +39,28 @@ The MailAgent is in excellent shape. The two previously open concerns — recrea
 
 ---
 
-## ⚠️ Critical Violations
+## ✅ No Open Critical Violations
 
-### 1. ✅ ~~New Outlook `Application` Instance Per Poll~~ — RESOLVED
+All previously-reported violations are resolved or accepted as by-design.
 
-`OutlookMailReader` was refactored to use a dedicated, long-lived STA background thread backed by a `BlockingCollection<Action>` work queue. All COM operations now run exclusively on this thread for the service's entire lifetime.
+### 1. ✅ ~~New Outlook `Application` Instance Per Poll~~ — FULLY RESOLVED (CONFIRMED)
 
-However, `ReadUnreadMailsOnSta()` still creates `new MSOutlook.Application()` and calls `Logon/Logoff` **per invocation** (i.e., each time `ReadUnreadMails()` is called). Outlook COM guidelines recommend keeping a single `Application` instance alive for the process lifetime. This is an open improvement opportunity but is significantly less severe now that operations run on the correct STA thread:
+`OutlookMailReader.EnsureOutlookSession()` creates the `MSOutlook.Application` and `MSOutlook.NameSpace` objects exactly once per process lifetime and caches them in `_outlookApp` / `_outlookNs` fields. Subsequent calls are no-ops:
 
 ```csharp
-// OutlookMailReader.cs — current (per-call on STA, but still new Application())
-app = new MSOutlook.Application();  // 🟡 still creates per call
-ns = app.GetNamespace("MAPI");
-ns.Logon(...);
-// ... poll ...
-ns.Logoff();
+// OutlookMailReader.cs — current (confirmed in 2026-05-01 review)
+private void EnsureOutlookSession()
+{
+    if (_outlookApp is not null && _outlookNs is not null)
+        return;   // ✅ reuses existing session
+
+    _outlookApp = new MSOutlook.Application();
+    _outlookNs  = _outlookApp.GetNamespace("MAPI");
+    _outlookNs.Logon(Missing.Value, Missing.Value, false, false);
+}
 ```
+
+On any COM exception, `ReleaseOutlookSession()` tears down the cached pair so the next poll attempt starts fresh with a new session.
 
 ---
 
@@ -67,39 +74,32 @@ public IReadOnlyList<RawMailItem> ReadUnreadMails()
 }
 ```
 
-Blocking the caller is a deliberate consequence of the STA work queue pattern: the work must complete on the STA thread before results can be returned. A fully async approach would require restructuring the COM model or using `IAsyncEnumerable<T>`. The current design is acceptable for a polling loop, but **cancellation from the caller cannot propagate** into the STA work item.
+Blocking the caller is a deliberate consequence of the STA work queue pattern. **Cancellation from the caller cannot propagate** into the STA work item — acknowledged limitation.
 
 ---
 
-### 3. Unbounded Email Body in ZeroMQ Frame
+### 3. ✅ ~~Unbounded Email Body in ZeroMQ Frame~~ — FULLY RESOLVED (CONFIRMED)
 
-Email bodies are passed to `ZeroMQMailPublisher.Publish()` without any size validation or truncation:
+`MailRelayWorker.TruncateBody()` enforces a configurable `MaxBodyCharacters` cap from `MailAgentOptions` before serializing the `MailRelayMessage`:
 
 ```csharp
-var json = JsonSerializer.Serialize(message, JsonOptions); // body included in full
-_publisher.Publish(json);
+// MailRelayWorker.cs — current (confirmed)
+Body: TruncateBody(mail.Body),   // ✅ bounded by MaxBodyCharacters option
 ```
-
-**Impact**: A large HTML newsletter or an attachment-embedded email could produce a multi-MB ZeroMQ frame, causing memory pressure on both the MailAgent and the receiving Web process. NetMQ has no built-in frame size limits.
 
 ---
 
-### 4. `MailRelayWorker.PollAndPublishAsync` Is Not Truly Async
+### 4. `MailRelayWorker.PollAndPublishAsync` — Fake Async (By Design)
 
 ```csharp
 private Task PollAndPublishAsync(CancellationToken ct)
 {
-    // ...
-    foreach (var mail in mails)
-    {
-        // synchronous publish
-        _publisher.Publish(json);
-    }
-    return Task.CompletedTask; // ❌ pretends to be async
+    // synchronous ReadUnreadMails() + synchronous Publish()
+    return Task.CompletedTask;   // 🟡 pretends to be async
 }
 ```
 
-The method signature returns `Task` but never awaits anything. This is misleading to readers and prevents `await`-based cancellation inside the loop body.
+The method returns `Task` but has no `await` points. This is an acknowledged consequence of the synchronous COM interop path; the `ct.ThrowIfCancellationRequested()` inside the loop provides the only cancellation point.
 
 ---
 

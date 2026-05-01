@@ -6,22 +6,23 @@
 
 ### Δ Changes Since Previous Review
 
-| #   | Issue                                                                   | Status                                                     |
-| --- | ----------------------------------------------------------------------- | ---------------------------------------------------------- |
-| 1   | `ComponentStateOverridden` not dispatched to `AlertEvaluationService`   | ✅ **FIXED** (previous review)                              |
-| 2   | Cache invalidation gap in both operator handlers                        | ✅ **FIXED** (previous review)                              |
-| 3   | N+1 dashboard query (2N+1 per refresh)                                  | ✅ **FIXED** (previous review)                              |
-| 4   | Synthetic `PreviousStatus = Unknown` for `ComponentLost`                | ✅ **FIXED** (previous review)                              |
-| 5   | `FinalizeExecutionAsync` sends success notifications when flag is false | ✅ **FIXED** (previous review)                              |
-| 6   | `AppSettingsImporter` locale-sensitive `TimeOnly.Parse()`               | ✅ **FIXED** (previous review)                              |
-| 7   | `SendOnFailure` naming/semantic ambiguity                               | ✅ **FIXED** — renamed to `NotificationsEnabled`            |
-| —   | `GetAllActiveAsync` called on every `ComponentStatusChanged` event      | 🟡 **NEW** — hot-path N+1 in `UpdateComponentProgressAsync` |
+| #   | Issue                                                                   | Status                                                                          |
+| --- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 1   | `ComponentStateOverridden` not dispatched to `AlertEvaluationService`   | ✅ **FIXED** (previous review)                                                   |
+| 2   | Cache invalidation gap in both operator handlers                        | ✅ **FIXED** (previous review)                                                   |
+| 3   | N+1 dashboard query (2N+1 per refresh)                                  | ✅ **FIXED** (previous review)                                                   |
+| 4   | Synthetic `PreviousStatus = Unknown` for `ComponentLost`                | ✅ **FIXED** (previous review)                                                   |
+| 5   | `FinalizeExecutionAsync` sends success notifications when flag is false | ✅ **FIXED** (previous review)                                                   |
+| 6   | `AppSettingsImporter` locale-sensitive `TimeOnly.Parse()`               | ✅ **FIXED** (previous review)                                                   |
+| 7   | `SendOnFailure` naming/semantic ambiguity                               | ✅ **FIXED** — renamed to `NotificationsEnabled`                                 |
+| —   | `GetAllActiveAsync` called on every `ComponentStatusChanged` event      | 🟡 **STILL OPEN** — hot-path N+1 in `UpdateComponentProgressAsync`               |
+| —   | `NullAggregateHealthEvaluationService` defined but never registered     | 🟡 **NEW** — orphaned dead-code stub in `ApplicationServiceCollectionExtensions` |
 
 ---
 
 ## 📊 Architecture Health Score: 8.5 / 10
 
-All previous violations are now resolved, including the `SendOnFailure` → `NotificationsEnabled` rename. One new performance concern is identified: `UpdateComponentProgressAsync` calls `GetAllActiveAsync()` on every single `ComponentStatusChanged` event, loading every active definition from SQLite and then filtering in memory. Under high-frequency heartbeat activity this is a hot-path N+1.
+The `GetAllActiveAsync` N+1 hot-path remains the sole open performance concern. A new minor finding is also noted: `NullAggregateHealthEvaluationService` is defined in `ApplicationServiceCollectionExtensions.cs` but is never registered with the DI container and never referenced in any test project — it is dead code.
 
 ---
 
@@ -89,9 +90,24 @@ WHERE hmd.IsActive = 1 AND w.ComponentId = @ComponentId
 
 ---
 
-## 💡 Refactoring Suggestion — `NotificationsEnabled` (Already Applied)
+## 💡 Observations
 
-The `SendOnFailure` flag has been renamed `NotificationsEnabled` in the domain model. The DB column retains the legacy name `SendOnFailure` as a persistence detail — this is acceptable for SQLite but should be documented in the repository mapping.
+### 1. `NullAggregateHealthEvaluationService` — Orphaned Stub
+
+`ApplicationServiceCollectionExtensions.cs` defines an `internal sealed class NullAggregateHealthEvaluationService : IAggregateHealthEvaluationService` at the bottom of the file, but it is **never registered** in `AddApplicationServices()` and **never referenced** from any test project. The real `AggregateHealthEvaluationService` is registered directly. The null-object stub is dead code and should be removed to avoid confusion.
+
+```csharp
+// ApplicationServiceCollectionExtensions.cs — dead code
+internal sealed class NullAggregateHealthEvaluationService : IAggregateHealthEvaluationService
+{
+    public Task UpdateComponentProgressAsync(...) => Task.CompletedTask;  // ❌ never used
+    public Task EvaluateDefinitionAsync(...)      => Task.CompletedTask;  // ❌ never used
+}
+```
+
+### 2. `SendOnFailure` Schema Column — Documented Cross-Layer Inconsistency
+
+The `SendOnFailure` flag has been renamed `NotificationsEnabled` in the domain model. The DB column retains the legacy name `SendOnFailure` — this creates a semantic gap documented separately in the Infrastructure review. The repository mapping `notificationsEnabled: row.SendOnFailure == 1` is functionally correct.
 
 ---
 

@@ -6,20 +6,22 @@
 
 ### Δ Changes Since Previous Review
 
-| #   | Issue                                                          | Status                                                    |
-| --- | -------------------------------------------------------------- | --------------------------------------------------------- |
-| 1   | Reflection-based domain mutation in `DailyExecutionRepository` | ✅ **FIXED** (previous review)                             |
-| 2   | `SmtpClient` deprecated                                        | ✅ **FIXED** (previous review) — replaced with MailKit     |
-| 3   | Fire-and-forget `OnTimerFired` — `_stoppingToken` missing      | ✅ **FIXED** (previous review)                             |
-| 4   | Fire-and-forget silently swallows exceptions                   | ✅ **FIXED** — `.ContinueWith` logs `OnlyOnFaulted` errors |
-| 5   | `SmtpEmailNotificationService` registered as `Transient`       | ✅ **FIXED** — now registered as `Singleton`               |
-| —   | Inconsistent `IDbConnection` open state across repositories    | 🟡 **STILL OPEN** (low priority)                           |
+| #   | Issue                                                          | Status                                                     |
+| --- | -------------------------------------------------------------- | ---------------------------------------------------------- |
+| 1   | Reflection-based domain mutation in `DailyExecutionRepository` | ✅ **FIXED** (previous review)                              |
+| 2   | `SmtpClient` deprecated                                        | ✅ **FIXED** (previous review) — replaced with MailKit      |
+| 3   | Fire-and-forget `OnTimerFired` — `_stoppingToken` missing      | ✅ **FIXED** (previous review)                              |
+| 4   | Fire-and-forget silently swallows exceptions                   | ✅ **FIXED** — `.ContinueWith` logs `OnlyOnFaulted` errors  |
+| 5   | `SmtpEmailNotificationService` registered as `Transient`       | ✅ **FIXED** — now registered as `Singleton`                |
+| —   | Inconsistent `IDbConnection` open state across repositories    | 🟡 **STILL OPEN** (low priority)                            |
+| —   | `SendOnFailure` schema column not renamed after domain rename  | 🟡 **NEW** — semantic drift between schema and domain model |
+| —   | `AddRealtimeNotifications()` XML doc comment is stale          | 🟡 **NEW** — doc claims it registers `IMonitorBroadcaster`  |
 
 ---
 
-## 📊 Architecture Health Score: 9.5 / 10
+## 📊 Architecture Health Score: 9.0 / 10
 
-The two most important fixes this cycle are complete: `OnTimerFired` now logs any exception that escapes `RaiseComponentLostAsync` via a `.ContinueWith(OnlyOnFaulted)` continuation, and `SmtpEmailNotificationService` is registered as a `Singleton` to avoid per-email TCP connection allocation. The only remaining concern is the inconsistent connection-open pattern across repositories, which is low risk but could cause a confusing runtime error if a new repository forgets to open its connection.
+Two new observations are identified this cycle. The domain rename of `SendOnFailure` → `NotificationsEnabled` (fix F3) was not propagated to the SQLite schema or the `DefinitionRow` Dapper record — the column still reads `SendOnFailure`, creating a semantic drift that will mislead developers querying the database directly. Additionally, the `AddRealtimeNotifications()` XML doc comment incorrectly states it registers `MonitorBroadcaster` as `IMonitorBroadcaster`, when that registration actually lives in `ApplicationServiceCollectionExtensions`. Both are low-risk documentation/schema inconsistencies, not runtime defects, but they will erode discoverability over time.
 
 ---
 
@@ -86,7 +88,7 @@ private static DailyExecution MapToDomain(DailyExecutionRow row)
 
 ---
 
-## ⚠️ Remaining Violation
+## ⚠️ Remaining Violations
 
 ### 1. Inconsistent `IDbConnection` Open State Across Repositories
 
@@ -107,6 +109,58 @@ using var conn = _factory.CreateConnection();
 **Impact**: Low risk today (Dapper handles both patterns), but inconsistency will mislead maintainers and creates a subtle trap if a new repository skips the open call in a path where Dapper's implicit open does not fire (e.g., raw `IDbCommand` usage).
 
 **Fix**: Standardize on explicit `conn.Open()` across all repositories, or document the lazy-open convention explicitly in a `DbConnectionFactory` XML comment.
+
+---
+
+### 2. 🟡 Schema Column `SendOnFailure` Not Renamed After Domain Rename
+
+The domain model property `HealthMonitorDefinition.SendOnFailure` was renamed to `NotificationsEnabled` (fix F3). However, the SQLite schema in `DatabaseInitializer.cs` and the Dapper row record in `HealthMonitorDefinitionRepository` still use the old name:
+
+```csharp
+// DatabaseInitializer.cs — DDL unchanged
+CREATE TABLE IF NOT EXISTS HealthMonitorDefinitions (
+    ...
+    SendOnFailure   INTEGER NOT NULL DEFAULT 0,   // ❌ stale name
+    ...
+);
+
+// HealthMonitorDefinitionRepository.cs — DefinitionRow record
+private sealed record DefinitionRow(
+    ...
+    long    SendOnFailure,   // ❌ stale name
+    ...);
+
+// Mapping in MapToDomain
+notificationsEnabled: row.SendOnFailure == 1   // Works, but hides the mismatch
+```
+
+**Impact**: No runtime defect — the mapping `notificationsEnabled: row.SendOnFailure == 1` is functionally correct. However, anyone querying the SQLite file directly (debugging, BI tool, DBA) will encounter `SendOnFailure` which now means the opposite of what it says: `1` means "all notifications enabled," not "send on failure only." This will become a maintenance trap as the codebase evolves.
+
+**Fix**: Rename the DDL column to `NotificationsEnabled` and update the `DefinitionRow` record accordingly. Because SQLite does not support `RENAME COLUMN` before version 3.25.0 (WAL mode is compatible), use `ALTER TABLE HealthMonitorDefinitions RENAME COLUMN SendOnFailure TO NotificationsEnabled;` — supported since SQLite 3.25 (bundled in .NET 8's `Microsoft.Data.Sqlite`).
+
+---
+
+### 3. 🟡 Stale XML Doc Comment in `AddRealtimeNotifications()`
+
+The `AddRealtimeNotifications()` summary doc claims it registers `MonitorBroadcaster` as `IMonitorBroadcaster`, but the method body only registers `IRealtimeNotificationService → SignalRNotificationService`. The `MonitorBroadcaster` / `IMonitorBroadcaster` registration is performed in `ApplicationServiceCollectionExtensions.AddApplicationServices()`.
+
+```csharp
+// InfrastructureServiceCollectionExtensions.cs — current (misleading)
+/// <summary>
+/// Registers <see cref="SignalRNotificationService"/> as the singleton
+/// <see cref="IRealtimeNotificationService"/> implementation, and
+/// <see cref="MonitorBroadcaster"/> as the singleton <see cref="IMonitorBroadcaster"/>   ← ❌ false claim
+/// for Blazor Server in-process event broadcasting.
+/// </summary>
+public static IServiceCollection AddRealtimeNotifications(this IServiceCollection services)
+{
+    services.AddSingleton<IRealtimeNotificationService, SignalRNotificationService>();
+    // IMonitorBroadcaster is NOT registered here
+    return services;
+}
+```
+
+**Fix**: Remove the second sentence from the XML comment.
 
 ---
 
