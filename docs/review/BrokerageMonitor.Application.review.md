@@ -1,28 +1,29 @@
 # BrokerageMonitor.Application — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-05-01 _(previous: 2026-04-25)_
+> **Date**: 2026-05-01 _(fourth pass — refactor compliance check)_
 > **Layer**: Application (depends on Domain only)
 
 ### Δ Changes Since Previous Review
 
-| #   | Issue                                                                   | Status                                                                          |
-| --- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| 1   | `ComponentStateOverridden` not dispatched to `AlertEvaluationService`   | ✅ **FIXED** (previous review)                                                   |
-| 2   | Cache invalidation gap in both operator handlers                        | ✅ **FIXED** (previous review)                                                   |
-| 3   | N+1 dashboard query (2N+1 per refresh)                                  | ✅ **FIXED** (previous review)                                                   |
-| 4   | Synthetic `PreviousStatus = Unknown` for `ComponentLost`                | ✅ **FIXED** (previous review)                                                   |
-| 5   | `FinalizeExecutionAsync` sends success notifications when flag is false | ✅ **FIXED** (previous review)                                                   |
-| 6   | `AppSettingsImporter` locale-sensitive `TimeOnly.Parse()`               | ✅ **FIXED** (previous review)                                                   |
-| 7   | `SendOnFailure` naming/semantic ambiguity                               | ✅ **FIXED** — renamed to `NotificationsEnabled`                                 |
-| —   | `GetAllActiveAsync` called on every `ComponentStatusChanged` event      | 🟡 **STILL OPEN** — hot-path N+1 in `UpdateComponentProgressAsync`               |
-| —   | `NullAggregateHealthEvaluationService` defined but never registered     | 🟡 **NEW** — orphaned dead-code stub in `ApplicationServiceCollectionExtensions` |
+| #   | Issue                                                                   | Status                                                                           |
+| --- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 1   | `ComponentStateOverridden` not dispatched to `AlertEvaluationService`   | ✅ **FIXED** (previous review)                                                    |
+| 2   | Cache invalidation gap in both operator handlers                        | ✅ **FIXED** (previous review)                                                    |
+| 3   | N+1 dashboard query (2N+1 per refresh)                                  | ✅ **FIXED** (previous review)                                                    |
+| 4   | Synthetic `PreviousStatus = Unknown` for `ComponentLost`                | ✅ **FIXED** (previous review)                                                    |
+| 5   | `FinalizeExecutionAsync` sends success notifications when flag is false | ✅ **FIXED** (previous review)                                                    |
+| 6   | `AppSettingsImporter` locale-sensitive `TimeOnly.Parse()`               | ✅ **FIXED** (previous review)                                                    |
+| 7   | `SendOnFailure` naming/semantic ambiguity                               | ✅ **FIXED** — renamed to `NotificationsEnabled`                                  |
+| —   | `GetAllActiveAsync` called on every `ComponentStatusChanged` event      | ✅ **FIXED** — replaced with `GetByWatchedComponentAsync(evt.ComponentId)` JOIN   |
+| —   | `NullAggregateHealthEvaluationService` defined but never registered     | ✅ **FIXED** — class deleted from `ApplicationServiceCollectionExtensions`        |
+| —   | `GetSystemsWithComponentsQueryHandler` foreach + per-system query       | 🟡 **NEW — LOW** — N+1 moved from Web page into Application handler; not resolved |
 
 ---
 
-## 📊 Architecture Health Score: 8.5 / 10
+## 📊 Architecture Health Score: 9.0 / 10
 
-The `GetAllActiveAsync` N+1 hot-path remains the sole open performance concern. A new minor finding is also noted: `NullAggregateHealthEvaluationService` is defined in `ApplicationServiceCollectionExtensions.cs` but is never registered with the DI container and never referenced in any test project — it is dead code.
+Both outstanding violations from the 2026-05-01 review have been resolved. `GetAllActiveAsync` in `UpdateComponentProgressAsync` is replaced by the new `GetByWatchedComponentAsync(evt.ComponentId)` JOIN query; `NullAggregateHealthEvaluationService` has been deleted. Four new Application-layer query handlers (`GetAlertsQueryHandler`, `GetActiveSystemIdsQueryHandler`, `GetActiveComponentsQueryHandler`, `GetSystemsWithComponentsQueryHandler`) were added to serve the Web layer — an architectural improvement. One new finding: `GetSystemsWithComponentsQueryHandler` still executes a `foreach` + `GetBySystemIdAsync` loop (N+1), moving the problem from the Web page into the Application layer rather than resolving it.
 
 ---
 
@@ -42,72 +43,67 @@ The `GetAllActiveAsync` N+1 hot-path remains the sole open performance concern. 
 
 ---
 
-## ⚠️ Remaining Violation
+## ✅ Fixed Violation — Hot-Path N+1 in `UpdateComponentProgressAsync`
 
-### 1. Hot-Path N+1 in `UpdateComponentProgressAsync`
-
-On every `ComponentStatusChanged` event, the service loads **all** active definitions from SQLite, then filters in memory:
+On every `ComponentStatusChanged` event, the service previously loaded **all** active definitions from SQLite, then filtered in memory. This has been fixed with a new repository method:
 
 ```csharp
-// AggregateHealthEvaluationService.cs — current
-public async Task UpdateComponentProgressAsync(ComponentStatusChanged evt, ...)
-{
-    var definitions = await _definitionRepo.GetAllActiveAsync(ct); // ❌ full table scan per event
-    var watchingDefinitions = definitions
-        .Where(d => d.WatchedComponents.Any(w => w.ComponentId == evt.ComponentId))
-        .ToList();
-    ...
-}
-```
+// Before ❌ — full table scan per heartbeat event
+var definitions = await _definitionRepo.GetAllActiveAsync(ct);
+var watchingDefinitions = definitions
+    .Where(d => d.WatchedComponents.Any(w => w.ComponentId == evt.ComponentId))
+    .ToList();
 
-**Impact**: In a production environment with 20 systems × 10 components each, a burst of 200 heartbeats per second means 200 `GetAllActiveAsync` calls per second, each returning all 20+ definitions and their junction rows. Under normal operating conditions the definitions table is small and SQLite is fast, but this pattern will not scale and obscures the intent.
-
-**Fix**: Add a targeted query to `IHealthMonitorDefinitionRepository` and implement it in the repository:
-
-```csharp
-// IHealthMonitorDefinitionRepository.cs (proposed addition)
-Task<IReadOnlyList<HealthMonitorDefinition>> GetByWatchedComponentAsync(
-    string componentId, CancellationToken ct = default);
-```
-
-```csharp
-// AggregateHealthEvaluationService.cs (proposed)
+// After ✅ — index-backed JOIN, only relevant definitions returned
 var watchingDefinitions = await _definitionRepo
     .GetByWatchedComponentAsync(evt.ComponentId, ct)
     .ConfigureAwait(false);
-
-if (watchingDefinitions.Count == 0)
-    return;
 ```
 
-The SQL implementation is a single join:
+---
 
-```sql
-SELECT hmd.* FROM HealthMonitorDefinitions hmd
-INNER JOIN HealthMonitorWatchedComponents w ON w.DefinitionId = hmd.DefinitionId
-WHERE hmd.IsActive = 1 AND w.ComponentId = @ComponentId
+## ⚠️ New Violation (LOW) — N+1 in `GetSystemsWithComponentsQueryHandler`
+
+### Problem
+
+`GetSystemsWithComponentsQueryHandler.HandleAsync()` still uses a `foreach` loop that calls `GetBySystemIdAsync` once per system — the same N+1 pattern that was present in `SystemManagementPage.razor`. The violation has been **moved into the Application layer** rather than resolved:
+
+```csharp
+// GetSystemsWithComponentsQueryHandler.cs — ❌ N+1 still present
+foreach (var sys in allSystems)
+{
+    var comps = await _componentRepo.GetBySystemIdAsync(sys.SystemId, ct) // N queries
+        .ConfigureAwait(false);
+    componentsBySystem[sys.SystemId] = comps.OrderBy(c => c.Name).ToList();
+}
+```
+
+**Impact**: Low in the current SQLite environment (management page load, not a hot path). However, the pattern is architecturally identical to the one that was just corrected in the dashboard.
+
+**Fix**: Add `GetAllActiveAsync()` to `IMonitoredComponentRepository` (if not present) and group in memory, or add a dedicated `GetAllActiveGroupedBySystemAsync()` repository method:
+
+```csharp
+// Preferred fix — single query + in-memory grouping
+var allComponents = await _componentRepo.GetAllActiveAsync(ct).ConfigureAwait(false);
+var componentsBySystem = allComponents
+    .GroupBy(c => c.SystemId, StringComparer.Ordinal)
+    .ToDictionary(
+        g => g.Key,
+        g => (IReadOnlyList<MonitoredComponent>)g.OrderBy(c => c.Name).ToList(),
+        StringComparer.Ordinal);
 ```
 
 ---
 
 ## 💡 Observations
 
-### 1. `NullAggregateHealthEvaluationService` — Orphaned Stub
+### 1. New Application Handlers — Indentation Convention Inconsistency
 
-`ApplicationServiceCollectionExtensions.cs` defines an `internal sealed class NullAggregateHealthEvaluationService : IAggregateHealthEvaluationService` at the bottom of the file, but it is **never registered** in `AddApplicationServices()` and **never referenced** from any test project. The real `AggregateHealthEvaluationService` is registered directly. The null-object stub is dead code and should be removed to avoid confusion.
+All four new query handlers (`GetAlertsQueryHandler`, `GetActiveSystemIdsQueryHandler`, `GetActiveComponentsQueryHandler`, `GetSystemsWithComponentsQueryHandler`) use **2-space indentation** while the rest of the codebase uses **4-space indentation**. This is a minor style inconsistency that should be corrected for consistency.
 
-```csharp
-// ApplicationServiceCollectionExtensions.cs — dead code
-internal sealed class NullAggregateHealthEvaluationService : IAggregateHealthEvaluationService
-{
-    public Task UpdateComponentProgressAsync(...) => Task.CompletedTask;  // ❌ never used
-    public Task EvaluateDefinitionAsync(...)      => Task.CompletedTask;  // ❌ never used
-}
-```
+### 2. `SendOnFailure` Schema Column — Resolved
 
-### 2. `SendOnFailure` Schema Column — Documented Cross-Layer Inconsistency
-
-The `SendOnFailure` flag has been renamed `NotificationsEnabled` in the domain model. The DB column retains the legacy name `SendOnFailure` — this creates a semantic gap documented separately in the Infrastructure review. The repository mapping `notificationsEnabled: row.SendOnFailure == 1` is functionally correct.
+The `SendOnFailure` column has been renamed `NotificationsEnabled` in both the DDL schema and all repository SQL. An idempotent migration (`ApplyMigrationsAsync`) is applied on every startup to handle existing databases. Cross-layer semantic drift is eliminated.
 
 ---
 

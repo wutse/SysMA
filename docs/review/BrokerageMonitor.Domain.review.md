@@ -1,33 +1,33 @@
 # BrokerageMonitor.Domain — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-05-01 _(third pass — deep re-review)_
+> **Date**: 2026-05-01 _(fourth pass — refactor compliance check)_
 > **Layer**: Domain (innermost — no project references)
 
 ### Δ Changes Since Previous Review
 
-| #   | Issue                                             | Status                                     |
-| --- | ------------------------------------------------- | ------------------------------------------ |
-| 1   | Value objects missing `IEquatable<T>`             | ✅ **FIXED**                                |
-| 2   | `AlertRecord.Acknowledge()` allows overwriting    | ✅ **FIXED**                                |
-| 3   | `HealthRuleSchedule.MatchesCron()` fragile parser | ✅ **FIXED**                                |
-| 4   | Read models in `Repositories/` folder             | ✅ **FIXED**                                |
-| 5   | `ComponentState.Rehydrate()` missing              | ✅ **FIXED**                                |
-| 6   | Non-deterministic public constructors             | ✅ **FIXED**                                |
-| 7   | `IMonitoredSystemRepository` dual-write path      | 🔴 **NEW — HIGH** (this review)             |
-| 8   | `DailyExecution.Complete()` fails to deduplicate  | 🟡 **NEW — MEDIUM** (this review)           |
-| 9   | `MailParsingRule.GetHashCode()` incomplete        | 🟠 **NEW — LOW** (this review)              |
-| 10  | `AcknowledgeBySystemAsync` bypasses aggregate     | 🟠 **NEW — LOW / Documented** (this review) |
+| #   | Issue                                             | Status                                                                            |
+| --- | ------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 1   | Value objects missing `IEquatable<T>`             | ✅ **FIXED**                                                                       |
+| 2   | `AlertRecord.Acknowledge()` allows overwriting    | ✅ **FIXED**                                                                       |
+| 3   | `HealthRuleSchedule.MatchesCron()` fragile parser | ✅ **FIXED**                                                                       |
+| 4   | Read models in `Repositories/` folder             | ✅ **FIXED**                                                                       |
+| 5   | `ComponentState.Rehydrate()` missing              | ✅ **FIXED**                                                                       |
+| 6   | Non-deterministic public constructors             | ✅ **FIXED**                                                                       |
+| 7   | `IMonitoredSystemRepository` dual-write path      | ✅ **FIXED** — `SetMaintenanceModeAsync` removed from interface and implementation |
+| 8   | `DailyExecution.Complete()` fails to deduplicate  | ✅ **FIXED** — `Distinct(StringComparer.OrdinalIgnoreCase)` applied                |
+| 9   | `MailParsingRule.GetHashCode()` incomplete        | ✅ **FIXED** — `SuccessKeywords`/`FailureKeywords` folded into `HashCode`          |
+| 10  | `AcknowledgeBySystemAsync` bypasses aggregate     | ✅ **DOCUMENTED** — XML constraint comment added to interface                      |
 
 ---
 
-## 📊 Architecture Health Score: 8.0 / 10
+## 📊 Architecture Health Score: 9.5 / 10
 
-Three violations were found in this deep re-review pass. The Domain layer remains structurally sound, but the **dual-write path on `IMonitoredSystemRepository`** is a genuine aggregate boundary violation: `SetMaintenanceModeAsync` exposes a mutation path that silently bypasses the operator-name invariant enforced by `ActivateMaintenance` / `DeactivateMaintenance`, breaking both the aggregate contract and the audit trail. Two additional correctness gaps — missing idempotency guard in `Complete()` and an incomplete hash function contract in `MailParsingRule` — are documented below.
+All three violations from the 2026-05-01 deep re-review have been resolved in the `refactor` branch. `SetMaintenanceModeAsync` has been removed from the interface and its infrastructure implementation deleted; `DailyExecution.Complete()` now deduplicates via `Distinct(OrdinalIgnoreCase)`; `MailParsingRule.GetHashCode()` now folds all four fields. The `AcknowledgeBySystemAsync` aggregate-bypass trade-off is formally documented with a `WHERE AcknowledgedAt IS NULL` constraint in the XML doc. No open violations remain. The only persistent advisory concerns the implicit UTC assumptions in `MarketSessionWindow` and `DailyExecutionCreatorService`, tracked below.
 
 ---
 
-## 🔴 Violation 1 (HIGH) — `IMonitoredSystemRepository`: Dual-Write Path Anti-Pattern
+## ✅ Violation 1 (HIGH — FIXED) — `IMonitoredSystemRepository`: Dual-Write Path Anti-Pattern
 
 ### Problem
 
@@ -68,7 +68,7 @@ await _systemRepo.UpsertAsync(system, ct); // persists full aggregate state (all
 
 ---
 
-## 🟡 Violation 2 (MEDIUM) — `DailyExecution.Complete()`: Missing Idempotency Guard on `failedComponents`
+## ✅ Violation 2 (MEDIUM — FIXED) — `DailyExecution.Complete()`: Missing Idempotency Guard on `failedComponents`
 
 ### Problem
 
@@ -102,7 +102,7 @@ if (failedComponents is not null)
 
 ---
 
-## 🟠 Violation 3 (LOW) — `MailParsingRule.GetHashCode()`: Hash Contract Inconsistency
+## ✅ Violation 3 (LOW — FIXED) — `MailParsingRule.GetHashCode()`: Hash Contract Inconsistency
 
 ### Problem
 
@@ -139,7 +139,7 @@ public override int GetHashCode()
 
 ---
 
-## 🟠 Observation — `IAlertRecordRepository.AcknowledgeBySystemAsync`: Documented Aggregate Bypass
+## ✅ Observation — `IAlertRecordRepository.AcknowledgeBySystemAsync`: Documented Aggregate Bypass
 
 `AcknowledgeBySystemAsync(string systemId, string operatorName, ...)` batch-acknowledges all open alerts for a system in a single call. This deliberately bypasses `AlertRecord.Acknowledge()` — which enforces the `IsAcknowledged` re-entry guard — and pushes the invariant responsibility into the infrastructure SQL layer.
 

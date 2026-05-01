@@ -1,8 +1,69 @@
 # BrokerageMonitor — Architecture Review Summary
 
-> **Reviewed**: 2026-05-01 _(previous: 2026-04-25)_
+> **Reviewed**: 2026-05-01 _(fourth pass — refactor compliance check)_
+> **Previous**: 2026-05-01 (third pass — deep re-review)
 > **Reviewer**: Chief Software Architect
 > **Methodology**: Bottom-up dependency order — Domain → Application → Infrastructure → MailAgent → Web
+
+---
+
+## Health Scores
+
+| Project            | Previous | Current  | Delta | Key Remaining Risk                                                                              |
+| ------------------ | -------- | -------- | ----- | ----------------------------------------------------------------------------------------------- |
+| **Domain**         | 8.0 / 10 | 9.5 / 10 | ▲ 1.5 | Implicit UTC assumptions in `MarketSessionWindow` and `DailyExecutionCreatorService` (advisory) |
+| **Application**    | 8.5 / 10 | 9.0 / 10 | ▲ 0.5 | `GetSystemsWithComponentsQueryHandler` still N+1 (LOW — non-hot-path)                           |
+| **Infrastructure** | 9.0 / 10 | 9.5 / 10 | ▲ 0.5 | `IDbConnection` open convention inconsistent (LOW); `ApplyMigrationsAsync` sync naming (LOW)    |
+| **MailAgent**      | 9.0 / 10 | 9.0 / 10 | —     | No open violations; all fixes confirmed                                                         |
+| **Web**            | 7.5 / 10 | 9.5 / 10 | ▲ 2.0 | All 8 repository injections replaced; Dependency Rule now fully respected                       |
+
+---
+
+## ✅ Fixed Since Previous Review (2026-05-01 third pass)
+
+| #   | Where                                                      | What                                                                                                                                                                          |
+| --- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | **Domain / `IMonitoredSystemRepository`**                  | `SetMaintenanceModeAsync` removed from interface and infrastructure implementation. All maintenance-mode transitions now go through load → `ActivateMaintenance` → upsert.    |
+| F2  | **Domain / `DailyExecution.Complete()`**                   | `failedComponents.Distinct(StringComparer.OrdinalIgnoreCase)` applied before `AddRange`, matching the guard in `AddCompletedComponent()`.                                     |
+| F3  | **Domain / `MailParsingRule.GetHashCode()`**               | `SuccessKeywords` and `FailureKeywords` folded into `HashCode` with `OrdinalIgnoreCase`, eliminating O(n) bucket degradation in `Dictionary`/`HashSet`.                       |
+| F4  | **Domain / `IAlertRecordRepository`**                      | `AcknowledgeBySystemAsync` XML doc now documents the `WHERE AcknowledgedAt IS NULL` constraint so implementations cannot silently omit it.                                    |
+| F5  | **Application / `AggregateHealthEvaluationService`**       | `GetAllActiveAsync()` hot-path replaced with `GetByWatchedComponentAsync(evt.ComponentId)` — targeted JOIN, no full table scan per heartbeat.                                 |
+| F6  | **Application / `ApplicationServiceCollectionExtensions`** | `NullAggregateHealthEvaluationService` orphaned stub deleted.                                                                                                                 |
+| F7  | **Application (new)**                                      | 4 new Application query handlers added: `GetAlertsQueryHandler`, `GetActiveSystemIdsQueryHandler`, `GetActiveComponentsQueryHandler`, `GetSystemsWithComponentsQueryHandler`. |
+| F8  | **Infrastructure / `HealthMonitorDefinitionRepository`**   | `SendOnFailure` column renamed `NotificationsEnabled` in DDL, `DefinitionRow`, and all SQL strings. Idempotent `ApplyMigrationsAsync` migration applied on startup.           |
+| F9  | **Infrastructure / `AddRealtimeNotifications()`**          | XML doc comment no longer falsely claims it registers `IMonitorBroadcaster`.                                                                                                  |
+| F10 | **Infrastructure / `GetByWatchedComponentAsync`**          | Implementation added in `HealthMonitorDefinitionRepository` using a junction-table INNER JOIN.                                                                                |
+| F11 | **Web / All 5 pages**                                      | All 8 `@inject Repository` directives removed; pages now depend on Application-layer query handlers only. All `@using BrokerageMonitor.Domain.Repositories` removed.          |
+| F12 | **Web / `DashboardPage.razor`**                            | Orphaned `@inject IMonitoredSystemRepository SystemRepository` directive removed.                                                                                             |
+
+---
+
+## 🟡 Remaining Violations (Open)
+
+| #   | Where              | Severity | What                                                                                                                                                                                                                            |
+| --- | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Application**    | LOW      | `GetSystemsWithComponentsQueryHandler.HandleAsync()` executes a `foreach` + `GetBySystemIdAsync` loop (N+1). Not a hot path, but architecturally inconsistent. Fix: `GetAllActiveAsync()` + in-memory `GroupBy`.                |
+| 2   | **Infrastructure** | LOW      | `IDbConnection` open convention inconsistent — `HealthMonitorDefinitionRepository` calls `conn.Open()` explicitly; others rely on Dapper's lazy-open. Document or standardize.                                                  |
+| 3   | **Infrastructure** | LOW      | `ApplyMigrationsAsync` executes synchronously but carries the `Async` suffix and returns `Task.CompletedTask`. Convert to true `async Task` using `ExecuteReaderAsync`/`ExecuteNonQueryAsync`, or rename to drop the suffix.    |
+| 4   | **Domain**         | ADVISORY | Implicit UTC assumptions in `MarketSessionWindow.IsWithinSession()` and `DailyExecutionCreatorService` (`DateTime.Today`). Low operational risk; testability gap; recommend `TimeProvider` abstraction for the creator service. |
+
+---
+
+## 🔵 New Application Handlers — Style Note
+
+The four new query handlers added this cycle use **2-space indentation** instead of the codebase-standard **4-space**. Minor style inconsistency; should be corrected for consistency.
+
+---
+
+## Review Documents
+
+| File                                                                                   | Score    |
+| -------------------------------------------------------------------------------------- | -------- |
+| [BrokerageMonitor.Domain.review.md](BrokerageMonitor.Domain.review.md)                 | 9.5 / 10 |
+| [BrokerageMonitor.Application.review.md](BrokerageMonitor.Application.review.md)       | 9.0 / 10 |
+| [BrokerageMonitor.Infrastructure.review.md](BrokerageMonitor.Infrastructure.review.md) | 9.5 / 10 |
+| [BrokerageMonitor.MailAgent.review.md](BrokerageMonitor.MailAgent.review.md)           | 9.0 / 10 |
+| [BrokerageMonitor.Web.review.md](BrokerageMonitor.Web.review.md)                       | 9.5 / 10 |
 
 ---
 
@@ -18,7 +79,7 @@
 
 ---
 
-## ✅ Fixed Since Previous Review (2026-04-25)
+## ✅ Fixed Since Previous Review (2026-04-25 second pass — for historical reference)
 
 | #   | Where                                        | What                                                                                                                                        |
 | --- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -27,54 +88,3 @@
 | F3  | **Application / HealthMonitorDefinition**    | `SendOnFailure` renamed to `NotificationsEnabled` in the domain model — semantic ambiguity removed.                                         |
 | F4  | **Domain / ComponentState**                  | Public constructor now accepts `DateTimeOffset? changedAt = null` — `LastStatusChangedAt = changedAt ?? UtcNow` gives tests full control.   |
 | F5  | **Domain / DailyExecution**                  | Public constructor now accepts `DateTimeOffset? createdAt = null` — `CreatedAt = createdAt ?? UtcNow` gives tests full control.             |
-
----
-
-## 🆕 New Findings This Cycle (2026-05-01)
-
-| #   | Where              | What                                                                                                                                                                                                                                                                                                                                                     |
-| --- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| N1  | **Infrastructure** | `SendOnFailure` column in `HealthMonitorDefinitions` schema not renamed after domain property changed to `NotificationsEnabled` — semantic drift between persistence layer and domain model.                                                                                                                                                             |
-| N2  | **Infrastructure** | `AddRealtimeNotifications()` XML doc comment falsely claims it registers `IMonitorBroadcaster` — stale documentation.                                                                                                                                                                                                                                    |
-| N3  | **Application**    | `NullAggregateHealthEvaluationService` is defined but never registered in DI and never referenced in tests — orphaned dead-code stub.                                                                                                                                                                                                                    |
-| N4  | **MailAgent**      | 2026-04-25 `EnsureOutlookSession()` fix **confirmed in source** — `_outlookApp` / `_outlookNs` are long-lived; `Logon` is called once per process lifetime. `TruncateBody()` cap also confirmed. MailAgent review date updated to 2026-05-01.                                                                                                            |
-| N5  | **Domain**         | `IMonitoredSystemRepository.SetMaintenanceModeAsync(systemId, active)` exposes a second mutation path that bypasses `ActivateMaintenance` / `DeactivateMaintenance` — BI-009 operator invariant not enforced, `MaintenanceOperator` left inconsistent, audit trail broken. **Remove the method; all callers must use load → mutate → upsert.**           |
-| N6  | **Domain**         | `DailyExecution.Complete()` calls `_failedComponents.AddRange(failedComponents)` with no deduplication guard, while `AddCompletedComponent()` already applies one. Duplicate IDs produce incorrect failure counts and misleading notification content. Fix: `failedComponents.Distinct(StringComparer.OrdinalIgnoreCase)`.                               |
-| N7  | **Domain**         | `MailParsingRule.GetHashCode()` includes only `FromPattern` + `SubjectPattern`, while `Equals()` also compares `SuccessKeywords` + `FailureKeywords`. Maximises hash collision probability for the primary differentiating fields; O(n) bucket degradation in `Dictionary` / `HashSet`. Fix: fold keyword lists into `HashCode` via `OrdinalIgnoreCase`. |
-| N8  | **Domain**         | `IAlertRecordRepository.AcknowledgeBySystemAsync` deliberately bypasses `AlertRecord.Acknowledge()` for bulk performance. Trade-off accepted; repository interface must encode the `WHERE AcknowledgedAt IS NULL` constraint in its XML doc comment so future implementations cannot silently omit it.                                                   |
-
----
-
-## 🔴 Outstanding Critical Violation (Unchanged)
-
-| #   | Where   | What                                                                                                                                                                                                                                                                                                                                                                                              |
-| --- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C1  | **Web** | **Direct Domain repository injection in Blazor pages** — 8 `@inject` directives across 5 pages (`DashboardPage`, `AlertCenterPage`, `HealthDefinitionEditorPage`, `HealthManagementPage`, `HistoryPage`, `SystemManagementPage`) bypass the Application layer entirely, violating the Dependency Rule. Each repository usage must be replaced with a use-case handler or a new Application query. |
-
----
-
-## 🟡 Remaining Violations (Open)
-
-| #   | Where              | What                                                                                                                                                                                                                                                                                                                                              |
-| --- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **Domain**         | `IMonitoredSystemRepository.SetMaintenanceModeAsync` — remove the method. All maintenance-mode transitions must follow load → `ActivateMaintenance` / `DeactivateMaintenance` → `UpsertAsync` so the aggregate enforces BI-009.                                                                                                                   |
-| D2  | **Domain**         | `DailyExecution.Complete()` — apply `Distinct(StringComparer.OrdinalIgnoreCase)` to `failedComponents` before `AddRange`, matching the guard already present in `AddCompletedComponent()`.                                                                                                                                                        |
-| 1   | **Application**    | `UpdateComponentProgressAsync` calls `GetAllActiveAsync()` for every `ComponentStatusChanged` event — full table scan on every heartbeat. Add `GetByWatchedComponentAsync(componentId)` to `IHealthMonitorDefinitionRepository`.                                                                                                                  |
-| 2   | **Application**    | `NullAggregateHealthEvaluationService` is defined in `ApplicationServiceCollectionExtensions.cs` but never registered in DI and never referenced in any test project — orphaned dead-code stub; delete it.                                                                                                                                        |
-| 3   | **Infrastructure** | `IDbConnection` open convention is inconsistent — `HealthMonitorDefinitionRepository` calls `conn.Open()` explicitly; other repositories rely on Dapper's lazy-open. Document or standardize.                                                                                                                                                     |
-| 4   | **Infrastructure** | `SendOnFailure` schema column in `HealthMonitorDefinitions` table was not renamed when the domain property changed to `NotificationsEnabled`. Rename via `ALTER TABLE … RENAME COLUMN SendOnFailure TO NotificationsEnabled` and update `DefinitionRow`.                                                                                          |
-| 5   | **Infrastructure** | `AddRealtimeNotifications()` XML doc comment incorrectly claims it registers `MonitorBroadcaster` as `IMonitorBroadcaster` — the actual registration is in `ApplicationServiceCollectionExtensions`. Remove the false claim from the doc comment.                                                                                                 |
-| 6   | **Web**            | Orphaned `@inject IMonitoredSystemRepository SystemRepository` in `DashboardPage.razor` — declared but never referenced anywhere in markup or `@code`; remove the directive.                                                                                                                                                                      |
-| C1  | **Web**            | **Direct Domain repository injection in Blazor pages** — 8 `@inject` directives across 5 pages (`DashboardPage`, `AlertCenterPage`, `HealthDefinitionEditorPage`, `HealthManagementPage`, `HistoryPage`, `SystemManagementPage`) bypass the Application layer. Each usage must be routed through an existing or new Application use-case handler. |
-
----
-
-## Review Documents
-
-| File                                                                                   | Score    |
-| -------------------------------------------------------------------------------------- | -------- |
-| [BrokerageMonitor.Domain.review.md](BrokerageMonitor.Domain.review.md)                 | 8.0 / 10 |
-| [BrokerageMonitor.Application.review.md](BrokerageMonitor.Application.review.md)       | 8.5 / 10 |
-| [BrokerageMonitor.Infrastructure.review.md](BrokerageMonitor.Infrastructure.review.md) | 9.0 / 10 |
-| [BrokerageMonitor.MailAgent.review.md](BrokerageMonitor.MailAgent.review.md)           | 9.0 / 10 |
-| [BrokerageMonitor.Web.review.md](BrokerageMonitor.Web.review.md)                       | 7.5 / 10 |

@@ -1,69 +1,57 @@
 # BrokerageMonitor.Web — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-05-01 _(previous: 2026-04-25)_
+> **Date**: 2026-05-01 _(fourth pass — refactor compliance check)_
 > **Layer**: Web / Presentation (depends on Application + Infrastructure)
 
 ### Δ Changes Since Previous Review
 
-| #   | Issue                                                                                   | Status                                                              |
-| --- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 1   | `Program.cs` SRP violation                                                              | ✅ **FIXED** (previous review)                                       |
-| 2   | Dynamic Quartz job scheduling not triggered on new definitions                          | ✅ **FIXED** (previous review)                                       |
-| —   | Direct Domain repository injection across 5 Blazor pages (8 points)                     | 🔴 **NEW — Critical** — Clean Architecture Dependency Rule violation |
-| —   | Orphaned `@inject IMonitoredSystemRepository SystemRepository` in `DashboardPage.razor` | 🟡 **NEW** — unused injection (dead code)                            |
+| #   | Issue                                                                                   | Status                                                                                       |
+| --- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 1   | `Program.cs` SRP violation                                                              | ✅ **FIXED** (previous review)                                                                |
+| 2   | Dynamic Quartz job scheduling not triggered on new definitions                          | ✅ **FIXED** (previous review)                                                                |
+| —   | Direct Domain repository injection across 5 Blazor pages (8 points)                     | ✅ **FIXED** — all 8 `@inject Repository` directives replaced with Application-layer handlers |
+| —   | Orphaned `@inject IMonitoredSystemRepository SystemRepository` in `DashboardPage.razor` | ✅ **FIXED** — injection directive removed                                                    |
 
 ---
 
-## 📊 Architecture Health Score: 7.5 / 10
+## 📊 Architecture Health Score: 9.5 / 10
 
-A significant architecture regression is present: eight `@inject` directives across five Blazor pages directly bind to Domain repository interfaces (`IMonitoredSystemRepository`, `IAlertRecordRepository`, `IMonitoredComponentRepository`). The Web layer is a dependency boundary — it must communicate with the outer world exclusively through Application-layer handlers and DTOs. Bypassing that boundary makes the pages impossible to test without a live database, couples UI components to persistence concerns, and will fragment business logic into the presentation tier over time.
-
----
-
-## ⚠️ Critical Violations
-
-### 1. Direct Domain Repository Injection in Blazor Pages
-
-Five Blazor pages inject Domain repository interfaces directly, bypassing the Application layer entirely:
-
-| Page                               | Injected Repositories                                         |
-| ---------------------------------- | ------------------------------------------------------------- |
-| `DashboardPage.razor`              | `IMonitoredSystemRepository` (also unused — see violation #2) |
-| `AlertCenterPage.razor`            | `IAlertRecordRepository`                                      |
-| `HealthDefinitionEditorPage.razor` | `IMonitoredSystemRepository`, `IMonitoredComponentRepository` |
-| `HealthManagementPage.razor`       | `IMonitoredSystemRepository`                                  |
-| `HistoryPage.razor`                | `IMonitoredSystemRepository`                                  |
-| `SystemManagementPage.razor`       | `IMonitoredSystemRepository`, `IMonitoredComponentRepository` |
-
-**Why this violates Clean Architecture**: The Dependency Rule states that Web components may only depend on the Application layer. Direct repository access:
-- Makes pages impossible to unit-test without a real SQLite database.
-- Fragments query logic across the UI tier (no central place to enforce auth, caching, or validation).
-- Directly couples a rendering component to the Infrastructure `IDbConnectionFactory` lifecycle.
-
-**Fix**: For each repository usage in a page, either:
-1. Route through an existing Application use-case handler, or
-2. Create a dedicated query handler in the Application layer and inject that instead.
+Both violations from the 2026-05-01 review are fully resolved. All eight `@inject` directives that directly referenced Domain repository interfaces have been removed across five Blazor pages; each page now depends only on the Application-layer query handlers introduced this cycle. A grep for `@inject.*Repository` and `@using BrokerageMonitor.Domain.Repositories` across all `.razor` files returns no matches. The Dependency Rule is now fully respected in the Web layer. The only remaining minor observation is that `GetSystemsWithComponentsQueryHandler` (Application layer) still internally executes N+1 queries — tracked in the Application review.
 
 ---
 
-### 2. Orphaned `@inject IMonitoredSystemRepository SystemRepository` in `DashboardPage.razor`
+## ✅ Fixed Violations (This Cycle)
 
-`DashboardPage.razor` declares `@inject IMonitoredSystemRepository SystemRepository` but never references `SystemRepository` anywhere in the component's markup or `@code` block:
+### 1. Direct Domain Repository Injection in Blazor Pages (FIXED)
 
-```razor
-@inject GetDashboardQueryHandler DashboardHandler
-@inject IMonitorBroadcaster Broadcaster
-@inject IMonitoredSystemRepository SystemRepository   ← never used
+All 8 repository `@inject` directives replaced with Application-layer query handlers:
+
+| Page                               | Removed Injection                                              | Replaced With                                                 |
+| ---------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
+| `DashboardPage.razor`              | `@inject IMonitoredSystemRepository SystemRepository` (unused) | directive removed entirely                                    |
+| `AlertCenterPage.razor`            | `@inject IAlertRecordRepository AlertRepo`                     | `@inject GetAlertsQueryHandler AlertsHandler`                 |
+| `HealthDefinitionEditorPage.razor` | `@inject IMonitoredSystemRepository SystemRepo`                | `@inject GetActiveSystemIdsQueryHandler SystemIdsHandler`     |
+| `HealthDefinitionEditorPage.razor` | `@inject IMonitoredComponentRepository ComponentRepo`          | `@inject GetActiveComponentsQueryHandler ComponentsHandler`   |
+| `HealthManagementPage.razor`       | `@inject IMonitoredSystemRepository SystemRepo`                | `@inject GetActiveSystemIdsQueryHandler SystemIdsHandler`     |
+| `HistoryPage.razor`                | `@inject IMonitoredSystemRepository SystemRepo`                | `@inject GetActiveSystemIdsQueryHandler SystemIdsHandler`     |
+| `SystemManagementPage.razor`       | `@inject IMonitoredSystemRepository SystemRepo`                | `@inject GetSystemsWithComponentsQueryHandler SystemsHandler` |
+| `SystemManagementPage.razor`       | `@inject IMonitoredComponentRepository ComponentRepo`          | consolidated into `GetSystemsWithComponentsQueryHandler`      |
+
+All `@using BrokerageMonitor.Domain.Repositories` directives have been removed. No `.razor` file references the Domain layer's repository namespace.
+
+### 2. Orphaned Injection in `DashboardPage.razor` (FIXED)
+
+```diff
+- @inject IMonitoredSystemRepository SystemRepository
+- @using BrokerageMonitor.Domain.Repositories
 ```
 
-**Impact**: Dead code that creates a phantom Infrastructure dependency on every Dashboard circuit instantiation.
-
-**Fix**: Remove the injection directive.
+The directive was declared but never referenced in markup or `@code`. Removed.
 
 ---
 
-## 💡 Refactoring Suggestions
+## 💡 Refactoring Suggestion (Historical — Now Applied)
 
 ### Repository → Use-Case Handler Migration Pattern
 
@@ -79,25 +67,11 @@ Five Blazor pages inject Domain repository interfaces directly, bypassing the Ap
 ```
 
 ```razor
-@* After — route via Application handler *@
-@inject GetDashboardQueryHandler DashboardHandler
+@* After — route via Application handler ✅ *@
+@inject GetAlertsQueryHandler AlertsHandler
 
 @code {
-    var summaries = await DashboardHandler.HandleAsync(new GetDashboardQuery());  // ✅
-}
-```
-
-For pages like `AlertCenterPage` that need data not yet exposed through a handler, create a targeted query:
-
-```csharp
-// Application/UseCases/Alerts/GetAlertCenterQueryHandler.cs
-public sealed class GetAlertCenterQueryHandler
-{
-    public async Task<AlertCenterDto> HandleAsync(
-        GetAlertCenterQuery query, CancellationToken ct = default)
-    {
-        // Encapsulates all repository calls and business projections
-    }
+    var alerts = await AlertsHandler.HandleAsync(new GetAlertsQuery(UnacknowledgedOnly: true));
 }
 ```
 

@@ -1,27 +1,30 @@
 # BrokerageMonitor.Infrastructure — Architecture Review
 
 > **Reviewer**: Chief Software Architect
-> **Date**: 2026-05-01 _(previous: 2026-04-25)_
+> **Date**: 2026-05-01 _(fourth pass — refactor compliance check)_
 > **Layer**: Infrastructure (depends on Domain + Application)
 
 ### Δ Changes Since Previous Review
 
-| #   | Issue                                                          | Status                                                     |
-| --- | -------------------------------------------------------------- | ---------------------------------------------------------- |
-| 1   | Reflection-based domain mutation in `DailyExecutionRepository` | ✅ **FIXED** (previous review)                              |
-| 2   | `SmtpClient` deprecated                                        | ✅ **FIXED** (previous review) — replaced with MailKit      |
-| 3   | Fire-and-forget `OnTimerFired` — `_stoppingToken` missing      | ✅ **FIXED** (previous review)                              |
-| 4   | Fire-and-forget silently swallows exceptions                   | ✅ **FIXED** — `.ContinueWith` logs `OnlyOnFaulted` errors  |
-| 5   | `SmtpEmailNotificationService` registered as `Transient`       | ✅ **FIXED** — now registered as `Singleton`                |
-| —   | Inconsistent `IDbConnection` open state across repositories    | 🟡 **STILL OPEN** (low priority)                            |
-| —   | `SendOnFailure` schema column not renamed after domain rename  | 🟡 **NEW** — semantic drift between schema and domain model |
-| —   | `AddRealtimeNotifications()` XML doc comment is stale          | 🟡 **NEW** — doc claims it registers `IMonitorBroadcaster`  |
+| #   | Issue                                                          | Status                                                                            |
+| --- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 1   | Reflection-based domain mutation in `DailyExecutionRepository` | ✅ **FIXED** (previous review)                                                     |
+| 2   | `SmtpClient` deprecated                                        | ✅ **FIXED** (previous review) — replaced with MailKit                             |
+| 3   | Fire-and-forget `OnTimerFired` — `_stoppingToken` missing      | ✅ **FIXED** (previous review)                                                     |
+| 4   | Fire-and-forget silently swallows exceptions                   | ✅ **FIXED** — `.ContinueWith` logs `OnlyOnFaulted` errors                         |
+| 5   | `SmtpEmailNotificationService` registered as `Transient`       | ✅ **FIXED** — now registered as `Singleton`                                       |
+| —   | Inconsistent `IDbConnection` open state across repositories    | 🟡 **STILL OPEN** (low priority)                                                   |
+| —   | `SendOnFailure` schema column not renamed after domain rename  | ✅ **FIXED** — column renamed; idempotent migration added in `DatabaseInitializer` |
+| —   | `AddRealtimeNotifications()` XML doc comment is stale          | ✅ **FIXED** — false `IMonitorBroadcaster` claim removed from doc comment          |
+| —   | `ApplyMigrationsAsync` synchronous despite `Async` suffix      | 🟡 **NEW — LOW** — method returns `Task.CompletedTask` synchronously               |
 
 ---
 
 ## 📊 Architecture Health Score: 9.0 / 10
 
-Two new observations are identified this cycle. The domain rename of `SendOnFailure` → `NotificationsEnabled` (fix F3) was not propagated to the SQLite schema or the `DefinitionRow` Dapper record — the column still reads `SendOnFailure`, creating a semantic drift that will mislead developers querying the database directly. Additionally, the `AddRealtimeNotifications()` XML doc comment incorrectly states it registers `MonitorBroadcaster` as `IMonitorBroadcaster`, when that registration actually lives in `ApplicationServiceCollectionExtensions`. Both are low-risk documentation/schema inconsistencies, not runtime defects, but they will erode discoverability over time.
+## 📊 Architecture Health Score: 9.5 / 10
+
+Both open violations from the 2026-05-01 review are resolved. `SendOnFailure` has been renamed `NotificationsEnabled` in the DDL, the `DefinitionRow` Dapper record, and all SQL strings; an idempotent `ApplyMigrationsAsync` migration runs at startup to rename the column in existing databases. The `AddRealtimeNotifications()` XML doc comment no longer contains the false `IMonitorBroadcaster` claim. A new `GetByWatchedComponentAsync` implementation correctly uses a junction-table JOIN. The only remaining open item is the low-priority `IDbConnection` open-state convention, plus a new minor observation on `ApplyMigrationsAsync` naming.
 
 ---
 
@@ -112,55 +115,77 @@ using var conn = _factory.CreateConnection();
 
 ---
 
-### 2. 🟡 Schema Column `SendOnFailure` Not Renamed After Domain Rename
+### 2. `ApplyMigrationsAsync` — Synchronous Implementation with `Async` Suffix (NEW — LOW)
 
-The domain model property `HealthMonitorDefinition.SendOnFailure` was renamed to `NotificationsEnabled` (fix F3). However, the SQLite schema in `DatabaseInitializer.cs` and the Dapper row record in `HealthMonitorDefinitionRepository` still use the old name:
-
-```csharp
-// DatabaseInitializer.cs — DDL unchanged
-CREATE TABLE IF NOT EXISTS HealthMonitorDefinitions (
-    ...
-    SendOnFailure   INTEGER NOT NULL DEFAULT 0,   // ❌ stale name
-    ...
-);
-
-// HealthMonitorDefinitionRepository.cs — DefinitionRow record
-private sealed record DefinitionRow(
-    ...
-    long    SendOnFailure,   // ❌ stale name
-    ...);
-
-// Mapping in MapToDomain
-notificationsEnabled: row.SendOnFailure == 1   // Works, but hides the mismatch
-```
-
-**Impact**: No runtime defect — the mapping `notificationsEnabled: row.SendOnFailure == 1` is functionally correct. However, anyone querying the SQLite file directly (debugging, BI tool, DBA) will encounter `SendOnFailure` which now means the opposite of what it says: `1` means "all notifications enabled," not "send on failure only." This will become a maintenance trap as the codebase evolves.
-
-**Fix**: Rename the DDL column to `NotificationsEnabled` and update the `DefinitionRow` record accordingly. Because SQLite does not support `RENAME COLUMN` before version 3.25.0 (WAL mode is compatible), use `ALTER TABLE HealthMonitorDefinitions RENAME COLUMN SendOnFailure TO NotificationsEnabled;` — supported since SQLite 3.25 (bundled in .NET 8's `Microsoft.Data.Sqlite`).
-
----
-
-### 3. 🟡 Stale XML Doc Comment in `AddRealtimeNotifications()`
-
-The `AddRealtimeNotifications()` summary doc claims it registers `MonitorBroadcaster` as `IMonitorBroadcaster`, but the method body only registers `IRealtimeNotificationService → SignalRNotificationService`. The `MonitorBroadcaster` / `IMonitorBroadcaster` registration is performed in `ApplicationServiceCollectionExtensions.AddApplicationServices()`.
+The new `ApplyMigrationsAsync` method in `DatabaseInitializer` returns `Task.CompletedTask` after executing all migration logic synchronously via `IDbCommand.ExecuteReader()` and `ExecuteNonQuery()`. The `Async` suffix implies an awaitable operation backed by I/O, which is misleading:
 
 ```csharp
-// InfrastructureServiceCollectionExtensions.cs — current (misleading)
-/// <summary>
-/// Registers <see cref="SignalRNotificationService"/> as the singleton
-/// <see cref="IRealtimeNotificationService"/> implementation, and
-/// <see cref="MonitorBroadcaster"/> as the singleton <see cref="IMonitorBroadcaster"/>   ← ❌ false claim
-/// for Blazor Server in-process event broadcasting.
-/// </summary>
-public static IServiceCollection AddRealtimeNotifications(this IServiceCollection services)
+// DatabaseInitializer.cs
+private static Task ApplyMigrationsAsync(IDbConnection connection, CancellationToken ct)
 {
-    services.AddSingleton<IRealtimeNotificationService, SignalRNotificationService>();
-    // IMonitorBroadcaster is NOT registered here
-    return services;
+    ct.ThrowIfCancellationRequested();
+    using var pragma = connection.CreateCommand();       // sync
+    using var reader = pragma.ExecuteReader();           // sync — no ExecuteReaderAsync
+    ...
+    renameCmd.ExecuteNonQuery();                         // sync
+    return Task.CompletedTask;                           // ❌ sync method, Async suffix
 }
 ```
 
-**Fix**: Remove the second sentence from the XML comment.
+**Fix**: Either convert to a true `async Task` using `ExecuteReaderAsync` / `ExecuteNonQueryAsync`, or rename to `ApplyMigrations()` returning `void` / remove the `Task` wrapper:
+
+```csharp
+// Option A — true async
+private static async Task ApplyMigrationsAsync(IDbConnection connection, CancellationToken ct)
+{
+    ct.ThrowIfCancellationRequested();
+    using var pragma = (SqliteCommand)connection.CreateCommand();
+    pragma.CommandText = "PRAGMA table_info(HealthMonitorDefinitions);";
+    using var reader = await pragma.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    bool hasSendOnFailure = false;
+    while (await reader.ReadAsync(ct).ConfigureAwait(false))
+    {
+        if (reader["name"] is string name &&
+            string.Equals(name, "SendOnFailure", StringComparison.OrdinalIgnoreCase))
+        { hasSendOnFailure = true; break; }
+    }
+    await reader.CloseAsync().ConfigureAwait(false);
+    if (hasSendOnFailure)
+    {
+        using var cmd = (SqliteCommand)connection.CreateCommand();
+        cmd.CommandText = "ALTER TABLE HealthMonitorDefinitions RENAME COLUMN SendOnFailure TO NotificationsEnabled;";
+        await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+}
+```
+
+---
+
+## ✅ Fixed Violations (This Cycle)
+
+### 2. Schema Column `SendOnFailure` → `NotificationsEnabled` (FIXED)
+
+```csharp
+// Before ❌ — DDL
+SendOnFailure INTEGER NOT NULL DEFAULT 0
+
+// After ✅ — DDL
+NotificationsEnabled INTEGER NOT NULL DEFAULT 0
+
+// Idempotent startup migration added in DatabaseInitializer.ApplyMigrationsAsync()
+ALTER TABLE HealthMonitorDefinitions RENAME COLUMN SendOnFailure TO NotificationsEnabled;
+```
+
+### 3. Stale XML Doc Comment in `AddRealtimeNotifications()` (FIXED)
+
+```csharp
+// Before ❌ — false claim about IMonitorBroadcaster registration
+/// Registers SignalRNotificationService as IRealtimeNotificationService, and
+/// MonitorBroadcaster as IMonitorBroadcaster for Blazor Server broadcasting.
+
+// After ✅ — accurate
+/// Registers SignalRNotificationService as the singleton IRealtimeNotificationService.
+```
 
 ---
 
