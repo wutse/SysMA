@@ -808,3 +808,331 @@ public sealed class DatabaseInitializerIntegrationTests
         await initializer.InitialiseAsync();
     }
 }
+
+// ---------------------------------------------------------------------------
+// HealthMonitorDefinitionRepository integration tests (§4.3 critical gap)
+// ---------------------------------------------------------------------------
+
+[TestClass]
+public sealed class HealthMonitorDefinitionRepositoryTests
+{
+    private TestInMemoryConnectionFactory _factory = default!;
+    private IHealthMonitorDefinitionRepository _repo = default!;
+
+    [TestInitialize]
+    public async Task InitAsync()
+    {
+        _factory = new TestInMemoryConnectionFactory();
+        var initializer = new DatabaseInitializer(_factory, NullLogger<DatabaseInitializer>.Instance);
+        await initializer.InitialiseAsync();
+        _repo = new HealthMonitorDefinitionRepository(_factory);
+
+        // Seed FK dependencies: system and component must exist before definitions
+        var sysRepo = new MonitoredSystemRepository(_factory);
+        var session = new MarketSessionWindow(new TimeOnly(9, 0), new TimeOnly(17, 0));
+        await sysRepo.UpsertAsync(new MonitoredSystem("SYS-01", "Test System", session));
+
+        var compRepo = new MonitoredComponentRepository(_factory);
+        await compRepo.UpsertAsync(new MonitoredComponent(
+            "COMP-01", "SYS-01", "Service A", ComponentType.Service, "topic.a", 30));
+        await compRepo.UpsertAsync(new MonitoredComponent(
+            "COMP-02", "SYS-01", "Service B", ComponentType.ScheduledJob, "topic.b", 60,
+            cronExpression: "0 18 * * 1-5"));
+    }
+
+    [TestCleanup]
+    public void Cleanup() => _factory.Dispose();
+
+    // ── GetByIdAsync ────────────────────────────────────────────────────────
+
+    [TestMethod]
+    public async Task GetByIdAsync_ExistingDefinition_ReturnsFullyMappedDefinition()
+    {
+        // Arrange
+        var def = BuildDefinition();
+        await _repo.UpsertAsync(def);
+
+        // Act
+        var retrieved = await _repo.GetByIdAsync(def.DefinitionId);
+
+        // Assert
+        Assert.IsNotNull(retrieved);
+        Assert.AreEqual(def.DefinitionId, retrieved.DefinitionId);
+        Assert.AreEqual(def.SystemId, retrieved.SystemId);
+        Assert.AreEqual(def.Name, retrieved.Name);
+        Assert.AreEqual(def.DeadlineTime, retrieved.DeadlineTime);
+        Assert.AreEqual(def.IsActive, retrieved.IsActive);
+    }
+
+    [TestMethod]
+    public async Task GetByIdAsync_NonExistentId_ReturnsNull()
+    {
+        // Act
+        var result = await _repo.GetByIdAsync(Guid.NewGuid());
+
+        // Assert
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public async Task GetByIdAsync_WatchedComponents_AreRoundTripped()
+    {
+        // Arrange — two watched components
+        var def = BuildDefinitionWithTwoComponents();
+        await _repo.UpsertAsync(def);
+
+        // Act
+        var retrieved = await _repo.GetByIdAsync(def.DefinitionId);
+
+        // Assert
+        Assert.IsNotNull(retrieved);
+        Assert.HasCount(2, retrieved.WatchedComponents);
+    }
+
+    [TestMethod]
+    public async Task GetByIdAsync_EmailRecipients_AreRoundTripped()
+    {
+        // Arrange
+        var def = new HealthMonitorDefinition(
+            Guid.NewGuid(), "SYS-01", "Check",
+            new TimeOnly(18, 0),
+            new HealthRuleSchedule(ScheduleType.Daily),
+            [new WatchedComponent("COMP-01", ComponentType.Service)],
+            emailRecipients: [new EmailAddress("ops@co.com"), new EmailAddress("dev@co.com")]);
+        await _repo.UpsertAsync(def);
+
+        // Act
+        var retrieved = await _repo.GetByIdAsync(def.DefinitionId);
+
+        // Assert
+        Assert.IsNotNull(retrieved);
+        Assert.HasCount(2, retrieved.EmailRecipients);
+        Assert.AreEqual("ops@co.com", retrieved.EmailRecipients[0].Value);
+    }
+
+    // ── UpsertAsync — insert ────────────────────────────────────────────────
+
+    [TestMethod]
+    public async Task UpsertAsync_NewDefinition_CanBeRetrievedById()
+    {
+        // Arrange
+        var def = BuildDefinition();
+
+        // Act
+        await _repo.UpsertAsync(def);
+        var retrieved = await _repo.GetByIdAsync(def.DefinitionId);
+
+        // Assert
+        Assert.IsNotNull(retrieved);
+        Assert.AreEqual(def.DefinitionId, retrieved.DefinitionId);
+    }
+
+    // ── UpsertAsync — update ────────────────────────────────────────────────
+
+    [TestMethod]
+    public async Task UpsertAsync_ExistingDefinition_UpdatesName()
+    {
+        // Arrange
+        var def = BuildDefinition();
+        await _repo.UpsertAsync(def);
+        def.Rename("Updated Name");
+
+        // Act
+        await _repo.UpsertAsync(def);
+        var retrieved = await _repo.GetByIdAsync(def.DefinitionId);
+
+        // Assert
+        Assert.IsNotNull(retrieved);
+        Assert.AreEqual("Updated Name", retrieved.Name);
+    }
+
+    [TestMethod]
+    public async Task UpsertAsync_UpdateWatchedComponents_ReplacesJunctionRows()
+    {
+        // Arrange — start with one component, then update to two
+        var def = BuildDefinition();
+        await _repo.UpsertAsync(def);
+
+        def.SetWatchedComponents([
+            new WatchedComponent("COMP-01", ComponentType.Service),
+            new WatchedComponent("COMP-02", ComponentType.ScheduledJob)]);
+        await _repo.UpsertAsync(def);
+
+        // Act
+        var retrieved = await _repo.GetByIdAsync(def.DefinitionId);
+
+        // Assert
+        Assert.IsNotNull(retrieved);
+        Assert.HasCount(2, retrieved.WatchedComponents);
+    }
+
+    [TestMethod]
+    public async Task UpsertAsync_DisableDefinition_SetsIsActiveFalse()
+    {
+        // Arrange
+        var def = BuildDefinition();
+        await _repo.UpsertAsync(def);
+        def.Deactivate();
+
+        // Act
+        await _repo.UpsertAsync(def);
+        var retrieved = await _repo.GetByIdAsync(def.DefinitionId);
+
+        // Assert
+        Assert.IsNotNull(retrieved);
+        Assert.IsFalse(retrieved.IsActive);
+    }
+
+    // ── GetAllActiveAsync ───────────────────────────────────────────────────
+
+    [TestMethod]
+    public async Task GetAllActiveAsync_ReturnsOnlyActiveDefinitions()
+    {
+        // Arrange
+        var active = BuildDefinition(name: "Active Check");
+        var inactive = BuildDefinition(name: "Inactive Check");
+        await _repo.UpsertAsync(active);
+        inactive.Deactivate();
+        await _repo.UpsertAsync(inactive);
+
+        // Act
+        var result = await _repo.GetAllActiveAsync();
+
+        // Assert
+        Assert.HasCount(1, result);
+        Assert.AreEqual("Active Check", result[0].Name);
+    }
+
+    // ── GetBySystemIdAsync ──────────────────────────────────────────────────
+
+    [TestMethod]
+    public async Task GetBySystemIdAsync_ReturnsOnlyDefinitionsForSystem()
+    {
+        // Arrange — seed a second system with its own component and definition
+        var sysRepo = new MonitoredSystemRepository(_factory);
+        var compRepo = new MonitoredComponentRepository(_factory);
+        var session = new MarketSessionWindow(new TimeOnly(9, 0), new TimeOnly(17, 0));
+        await sysRepo.UpsertAsync(new MonitoredSystem("SYS-02", "Other", session));
+        await compRepo.UpsertAsync(new MonitoredComponent(
+            "COMP-SYS2", "SYS-02", "Other Comp", ComponentType.Service, "topic.c", 30));
+
+        var def1 = BuildDefinition(systemId: "SYS-01", componentId: "COMP-01");
+        var def2 = new HealthMonitorDefinition(
+            Guid.NewGuid(), "SYS-02", "Other Check",
+            new TimeOnly(18, 0),
+            new HealthRuleSchedule(ScheduleType.Daily),
+            [new WatchedComponent("COMP-SYS2", ComponentType.Service)]);
+
+        await _repo.UpsertAsync(def1);
+        await _repo.UpsertAsync(def2);
+
+        // Act
+        var result = await _repo.GetBySystemIdAsync("SYS-01");
+
+        // Assert
+        Assert.HasCount(1, result);
+        Assert.AreEqual("SYS-01", result[0].SystemId);
+    }
+
+    // ── GetByWatchedComponentAsync ──────────────────────────────────────────
+
+    [TestMethod]
+    public async Task GetByWatchedComponentAsync_ReturnsDefinitionsWatchingComponent()
+    {
+        // Arrange — two definitions, only one watches COMP-01
+        var def1 = BuildDefinition(componentId: "COMP-01");
+        var def2 = BuildDefinition(componentId: "COMP-02");
+        await _repo.UpsertAsync(def1);
+        await _repo.UpsertAsync(def2);
+
+        // Act
+        var result = await _repo.GetByWatchedComponentAsync("COMP-01");
+
+        // Assert
+        Assert.HasCount(1, result);
+        Assert.AreEqual(def1.DefinitionId, result[0].DefinitionId);
+    }
+
+    // ── DeleteAsync ─────────────────────────────────────────────────────────
+
+    [TestMethod]
+    public async Task DeleteAsync_ExistingDefinition_RemovesDefinitionAndJunctionRows()
+    {
+        // Arrange
+        var def = BuildDefinition();
+        await _repo.UpsertAsync(def);
+
+        // Act
+        await _repo.DeleteAsync(def.DefinitionId);
+        var retrieved = await _repo.GetByIdAsync(def.DefinitionId);
+
+        // Assert
+        Assert.IsNull(retrieved);
+    }
+
+    // ── Weekly schedule round-trip ──────────────────────────────────────────
+
+    [TestMethod]
+    public async Task UpsertAsync_WeeklySchedule_RoundTripsScheduleFields()
+    {
+        // Arrange
+        var def = new HealthMonitorDefinition(
+            Guid.NewGuid(), "SYS-01", "Weekly Check",
+            new TimeOnly(17, 0),
+            new HealthRuleSchedule(ScheduleType.Weekly, dayOfWeek: DayOfWeek.Friday),
+            [new WatchedComponent("COMP-01", ComponentType.Service)]);
+        await _repo.UpsertAsync(def);
+
+        // Act
+        var retrieved = await _repo.GetByIdAsync(def.DefinitionId);
+
+        // Assert
+        Assert.IsNotNull(retrieved);
+        Assert.AreEqual(ScheduleType.Weekly, retrieved.Schedule.ScheduleType);
+        Assert.AreEqual(DayOfWeek.Friday, retrieved.Schedule.DayOfWeek);
+    }
+
+    // ── Cron schedule round-trip ────────────────────────────────────────────
+
+    [TestMethod]
+    public async Task UpsertAsync_CronSchedule_RoundTripsScheduleFields()
+    {
+        // Arrange
+        var def = new HealthMonitorDefinition(
+            Guid.NewGuid(), "SYS-01", "Cron Check",
+            new TimeOnly(18, 0),
+            new HealthRuleSchedule(ScheduleType.Cron, cronExpression: "0 18 * * 1-5"),
+            [new WatchedComponent("COMP-01", ComponentType.Service)]);
+        await _repo.UpsertAsync(def);
+
+        // Act
+        var retrieved = await _repo.GetByIdAsync(def.DefinitionId);
+
+        // Assert
+        Assert.IsNotNull(retrieved);
+        Assert.AreEqual(ScheduleType.Cron, retrieved.Schedule.ScheduleType);
+        Assert.AreEqual("0 18 * * 1-5", retrieved.Schedule.CronExpression);
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static HealthMonitorDefinition BuildDefinition(
+        string name = "Daily Check",
+        string systemId = "SYS-01",
+        string componentId = "COMP-01") =>
+        new(
+            Guid.NewGuid(), systemId, name,
+            new TimeOnly(18, 0),
+            new HealthRuleSchedule(ScheduleType.Daily),
+            [new WatchedComponent(componentId, ComponentType.Service)]);
+
+    private static HealthMonitorDefinition BuildDefinitionWithTwoComponents() =>
+        new(
+            Guid.NewGuid(), "SYS-01", "Multi-Component Check",
+            new TimeOnly(18, 0),
+            new HealthRuleSchedule(ScheduleType.Daily),
+            [
+                new WatchedComponent("COMP-01", ComponentType.Service),
+                new WatchedComponent("COMP-02", ComponentType.ScheduledJob)
+            ]);
+}
