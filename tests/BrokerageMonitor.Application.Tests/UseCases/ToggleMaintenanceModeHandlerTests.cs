@@ -258,7 +258,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _stateRepo.UpsertedStates.Count);
+        Assert.HasCount(1, _stateRepo.UpsertedStates);
         Assert.AreEqual(ComponentStatus.Maintenance, _stateRepo.UpsertedStates[0].Status);
     }
 
@@ -269,7 +269,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _auditLogger.Logs.Count);
+        Assert.HasCount(1, _auditLogger.Logs);
         Assert.AreEqual("MaintenanceActivated", _auditLogger.Logs[0].ActionType);
         Assert.AreEqual("Alice", _auditLogger.Logs[0].OperatorName);
     }
@@ -281,7 +281,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _realtimeService.MaintenanceChanges.Count);
+        Assert.HasCount(1, _realtimeService.MaintenanceChanges);
         Assert.AreEqual("SYS-1", _realtimeService.MaintenanceChanges[0].SystemId);
         Assert.IsTrue(_realtimeService.MaintenanceChanges[0].IsActive);
     }
@@ -311,7 +311,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _stateRepo.UpsertedStates.Count);
+        Assert.HasCount(1, _stateRepo.UpsertedStates);
         Assert.AreEqual(ComponentStatus.Unknown, _stateRepo.UpsertedStates[0].Status);
     }
 
@@ -322,7 +322,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _auditLogger.Logs.Count);
+        Assert.HasCount(1, _auditLogger.Logs);
         Assert.AreEqual("MaintenanceDeactivated", _auditLogger.Logs[0].ActionType);
     }
 
@@ -333,7 +333,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _realtimeService.MaintenanceChanges.Count);
+        Assert.HasCount(1, _realtimeService.MaintenanceChanges);
         Assert.IsFalse(_realtimeService.MaintenanceChanges[0].IsActive);
     }
 
@@ -351,7 +351,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(2, _stateRepo.UpsertedStates.Count);
+        Assert.HasCount(2, _stateRepo.UpsertedStates);
         Assert.IsTrue(_stateRepo.UpsertedStates.All(s => s.Status == ComponentStatus.Maintenance));
     }
 
@@ -380,7 +380,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(2, _stateCache.SetStateCalls.Count);
+        Assert.HasCount(2, _stateCache.SetStateCalls);
         Assert.IsTrue(_stateCache.SetStateCalls.All(s => s.Status == ComponentStatus.Maintenance));
     }
 
@@ -391,7 +391,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _stateCache.SetStateCalls.Count);
+        Assert.HasCount(1, _stateCache.SetStateCalls);
         Assert.AreEqual(ComponentStatus.Unknown, _stateCache.SetStateCalls[0].Status);
     }
 }

@@ -778,7 +778,7 @@ public sealed class AggregateHealthEvaluationServiceTests
         await sut.EvaluateDefinitionAsync(def.DefinitionId);
 
         // Assert — FR-020: inbox item written even with no notification config
-        Assert.AreEqual(1, inbox.Store.Count);
+        Assert.HasCount(1, inbox.Store);
         Assert.AreEqual(0, email.SendHealthSummaryCallCount);
     }
 

@@ -167,7 +167,7 @@ public sealed class AcknowledgeAlertHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(0, _alertRepo.AcknowledgeCalls.Count);
+        Assert.IsEmpty(_alertRepo.AcknowledgeCalls);
     }
 
     // -------------------------------------------------------------------------
@@ -181,7 +181,7 @@ public sealed class AcknowledgeAlertHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _alertRepo.AcknowledgeCalls.Count);
+        Assert.HasCount(1, _alertRepo.AcknowledgeCalls);
         Assert.AreEqual("SYS-1", _alertRepo.AcknowledgeCalls[0].SystemId);
         Assert.AreEqual("Alice", _alertRepo.AcknowledgeCalls[0].OperatorName);
     }
@@ -193,7 +193,7 @@ public sealed class AcknowledgeAlertHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _auditLogger.Logs.Count);
+        Assert.HasCount(1, _auditLogger.Logs);
         var log = _auditLogger.Logs[0];
         Assert.AreEqual("SYS-1", log.SystemId);
         Assert.AreEqual("AlertAcknowledged", log.ActionType);
@@ -208,7 +208,7 @@ public sealed class AcknowledgeAlertHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _realtimeService.AcknowledgedSystemIds.Count);
+        Assert.HasCount(1, _realtimeService.AcknowledgedSystemIds);
         Assert.AreEqual("SYS-1", _realtimeService.AcknowledgedSystemIds[0]);
     }
 }

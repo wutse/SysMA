@@ -223,7 +223,7 @@ public sealed class OverrideComponentStateHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(0, _stateRepo.UpsertedStates.Count);
+        Assert.IsEmpty(_stateRepo.UpsertedStates);
     }
 
     // -------------------------------------------------------------------------
@@ -237,7 +237,7 @@ public sealed class OverrideComponentStateHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _stateRepo.UpsertedStates.Count);
+        Assert.HasCount(1, _stateRepo.UpsertedStates);
         Assert.AreEqual(ComponentStatus.Error, _stateRepo.UpsertedStates[0].Status);
     }
 
@@ -265,7 +265,7 @@ public sealed class OverrideComponentStateHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _auditLogger.Logs.Count);
+        Assert.HasCount(1, _auditLogger.Logs);
         var log = _auditLogger.Logs[0];
         Assert.AreEqual("SYS-1", log.SystemId);
         Assert.AreEqual("COMP-1", log.ComponentId);
@@ -281,7 +281,7 @@ public sealed class OverrideComponentStateHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _realtimeService.StatusChanges.Count);
+        Assert.HasCount(1, _realtimeService.StatusChanges);
         var evt = _realtimeService.StatusChanges[0];
         Assert.AreEqual("COMP-1", evt.ComponentId);
         Assert.AreEqual(ComponentStatus.Error, evt.NewStatus);
@@ -320,7 +320,7 @@ public sealed class OverrideComponentStateHandlerTests
 
         await _sut.HandleAsync(command);
 
-        Assert.AreEqual(1, _stateCache.SetStateCalls.Count);
+        Assert.HasCount(1, _stateCache.SetStateCalls);
         Assert.AreEqual(ComponentStatus.Error, _stateCache.SetStateCalls[0].Status);
     }
 }

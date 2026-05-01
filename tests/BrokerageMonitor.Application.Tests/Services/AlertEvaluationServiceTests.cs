@@ -228,8 +228,8 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(status));
 
         // Assert
-        Assert.AreEqual(0, _alertRepo.Store.Count);
-        Assert.AreEqual(0, _realtimeService.AlertTriggeredCalls.Count);
+        Assert.IsEmpty(_alertRepo.Store);
+        Assert.IsEmpty(_realtimeService.AlertTriggeredCalls);
     }
 
     // -------------------------------------------------------------------------
@@ -246,7 +246,7 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(ComponentStatus.Error));
 
         // Assert
-        Assert.AreEqual(0, _alertRepo.Store.Count, "Alert must not be created in maintenance mode (BI-006).");
+        Assert.IsEmpty(_alertRepo.Store, "Alert must not be created in maintenance mode (BI-006).");
     }
 
     // -------------------------------------------------------------------------
@@ -263,7 +263,7 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(ComponentStatus.Lost));
 
         // Assert
-        Assert.AreEqual(0, _alertRepo.Store.Count, "Alert must not be created outside market session (FR-030).");
+        Assert.IsEmpty(_alertRepo.Store, "Alert must not be created outside market session (FR-030).");
     }
 
     // -------------------------------------------------------------------------
@@ -281,8 +281,7 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(ComponentStatus.Warning));
 
         // Assert
-        Assert.AreEqual(0, _alertRepo.Store.Count,
-            "Duplicate alert must be suppressed while GlobalFlag is active (BI-007).");
+        Assert.IsEmpty(_alertRepo.Store, "Duplicate alert must be suppressed while GlobalFlag is active (BI-007).");
     }
 
     // -------------------------------------------------------------------------
@@ -307,7 +306,7 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(status));
 
         // Assert
-        Assert.AreEqual(1, _alertRepo.Store.Count);
+        Assert.HasCount(1, _alertRepo.Store);
         var alert = _alertRepo.Store[0];
         Assert.AreEqual("SYS-1", alert.SystemId);
         Assert.AreEqual("COMP-1", alert.ComponentId);
@@ -330,7 +329,7 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(ComponentStatus.Error));
 
         // Assert
-        Assert.AreEqual(1, _realtimeService.AlertTriggeredCalls.Count);
+        Assert.HasCount(1, _realtimeService.AlertTriggeredCalls);
         Assert.AreEqual("SYS-1", _realtimeService.AlertTriggeredCalls[0].SystemId);
         Assert.AreEqual("COMP-1", _realtimeService.AlertTriggeredCalls[0].ComponentId);
     }
@@ -350,7 +349,7 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(ComponentStatus.Lost));
 
         // Assert
-        Assert.AreEqual(1, _emailService.SentAlerts.Count);
+        Assert.HasCount(1, _emailService.SentAlerts);
         Assert.AreEqual("ops@example.com", _emailService.SentAlerts[0].Recipients[0]);
         Assert.AreEqual(ComponentStatus.Lost, _emailService.SentAlerts[0].AlertStatus);
     }
@@ -365,8 +364,8 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(ComponentStatus.Error));
 
         // Assert
-        Assert.AreEqual(1, _alertRepo.Store.Count, "Alert should still be persisted.");
-        Assert.AreEqual(0, _emailService.SentAlerts.Count, "No email should be sent without recipients.");
+        Assert.HasCount(1, _alertRepo.Store, "Alert should still be persisted.");
+        Assert.IsEmpty(_emailService.SentAlerts, "No email should be sent without recipients.");
     }
 
     // -------------------------------------------------------------------------
@@ -389,8 +388,8 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(ComponentStatus.Error));
 
         // Assert
-        Assert.AreEqual(1, _alertRepo.Store.Count, "AlertRecord must be persisted even when email fails.");
-        Assert.AreEqual(1, _inboxRepo.Items.Count, "NotificationDeliveryFailed item must be written.");
+        Assert.HasCount(1, _alertRepo.Store, "AlertRecord must be persisted even when email fails.");
+        Assert.HasCount(1, _inboxRepo.Items, "NotificationDeliveryFailed item must be written.");
         Assert.AreEqual(NotificationType.NotificationDeliveryFailed, _inboxRepo.Items[0].NotificationType);
         Assert.AreEqual(AlertEvaluationService.AlertEmailFailureDefinitionId, _inboxRepo.Items[0].DefinitionId);
     }
@@ -411,7 +410,7 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(ComponentStatus.Error));
 
         // Assert
-        Assert.AreEqual(1, _realtimeService.AlertTriggeredCalls.Count,
+        Assert.HasCount(1, _realtimeService.AlertTriggeredCalls,
             "SignalR push must still be sent even when email fails.");
     }
 
@@ -427,7 +426,7 @@ public sealed class AlertEvaluationServiceTests
         await _sut.EvaluateAsync(AlertEval_Builder.EvtInsideSession(ComponentStatus.Error));
 
         // Assert
-        Assert.AreEqual(0, _alertRepo.Store.Count);
+        Assert.IsEmpty(_alertRepo.Store);
     }
 
     // -------------------------------------------------------------------------

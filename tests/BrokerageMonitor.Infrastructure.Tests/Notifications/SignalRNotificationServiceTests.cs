@@ -51,11 +51,13 @@ internal sealed class SpyHubContext : IHubContext<MonitorHub>
 
 internal sealed class NullBroadcaster : IMonitorBroadcaster
 {
+#pragma warning disable CS0067 // Events required by interface but never fired in this test double
     public event Action<string, string, ComponentStatus>? ComponentStatusUpdated;
     public event Action<string, string>? AlertTriggered;
     public event Action<string>? AlertAcknowledged;
     public event Action<string, bool>? MaintenanceModeChanged;
     public event Action<Guid, Guid, Domain.ValueObjects.NotificationType>? HealthNotificationReceived;
+#pragma warning restore CS0067
     public void PublishComponentStatusChanged(string c, string s, ComponentStatus n) { }
     public void PublishAlertTriggered(string s, string c) { }
     public void PublishAlertAcknowledged(string s) { }
