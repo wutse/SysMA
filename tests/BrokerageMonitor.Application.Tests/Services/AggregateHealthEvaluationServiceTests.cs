@@ -29,6 +29,10 @@ internal sealed class AHE_DefinitionRepo : IHealthMonitorDefinitionRepository
         => Task.FromResult<IReadOnlyList<HealthMonitorDefinition>>(
             [.. _store.Values.Where(d => d.SystemId == systemId)]);
 
+    public Task<IReadOnlyList<HealthMonitorDefinition>> GetByWatchedComponentAsync(string componentId, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<HealthMonitorDefinition>>(
+            [.. _store.Values.Where(d => d.IsActive && d.WatchedComponents.Any(w => w.ComponentId == componentId))]);
+
     public Task UpsertAsync(HealthMonitorDefinition def, CancellationToken ct = default)
     {
         _store[def.DefinitionId] = def;
@@ -109,8 +113,6 @@ internal sealed class AHE_SystemRepo : IMonitoredSystemRepository
         return Task.CompletedTask;
     }
 
-    public Task SetMaintenanceModeAsync(string systemId, bool active, CancellationToken ct = default)
-        => Task.CompletedTask;
 }
 
 internal sealed class AHE_ComponentStateRepo : IComponentStateRepository

@@ -29,8 +29,6 @@ internal sealed class AppImport_SystemRepo : IMonitoredSystemRepository
         return Task.CompletedTask;
     }
 
-    public Task SetMaintenanceModeAsync(string systemId, bool active, CancellationToken ct = default)
-        => Task.CompletedTask;
 }
 
 internal sealed class AppImport_ComponentRepo : IMonitoredComponentRepository

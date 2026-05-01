@@ -65,10 +65,14 @@ public static class ApplicationServiceCollectionExtensions
         // ---- Use-case handlers (scoped) ----
         services.AddScoped<GetDashboardQueryHandler>();
         services.AddScoped<AcknowledgeAlertHandler>();
+        services.AddScoped<GetAlertsQueryHandler>();
         services.AddScoped<ToggleMaintenanceModeHandler>();
         services.AddScoped<OverrideComponentStateHandler>();
         services.AddScoped<UpsertMonitoredSystemHandler>();
         services.AddScoped<UpsertMonitoredComponentHandler>();
+        services.AddScoped<GetActiveSystemIdsQueryHandler>();
+        services.AddScoped<GetSystemsWithComponentsQueryHandler>();
+        services.AddScoped<GetActiveComponentsQueryHandler>();
         services.AddScoped<AlertEvaluationService>();
         services.AddScoped<IAlertEvaluationService>(sp =>
             sp.GetRequiredService<AlertEvaluationService>());
@@ -106,15 +110,6 @@ internal sealed class NullAuditLogger : IAuditLogger
         string actionType, string operatorName,
         string? reason, DateTimeOffset occurredAt,
         CancellationToken ct = default)
-        => Task.CompletedTask;
-}
-
-internal sealed class NullAggregateHealthEvaluationService : IAggregateHealthEvaluationService
-{
-    public Task UpdateComponentProgressAsync(ComponentStatusChanged evt, CancellationToken ct = default)
-        => Task.CompletedTask;
-
-    public Task EvaluateDefinitionAsync(Guid definitionId, CancellationToken ct = default)
         => Task.CompletedTask;
 }
 

@@ -23,6 +23,10 @@ internal sealed class HealthDef_DefinitionRepo : IHealthMonitorDefinitionReposit
     public Task<IReadOnlyList<HealthMonitorDefinition>> GetBySystemIdAsync(string systemId, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<HealthMonitorDefinition>>([.. _store.Values.Where(d => d.SystemId == systemId)]);
 
+    public Task<IReadOnlyList<HealthMonitorDefinition>> GetByWatchedComponentAsync(string componentId, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<HealthMonitorDefinition>>(
+            [.. _store.Values.Where(d => d.IsActive && d.WatchedComponents.Any(w => w.ComponentId == componentId))]);
+
     public Task<IReadOnlyList<HealthMonitorDefinition>> GetAllActiveAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<HealthMonitorDefinition>>([.. _store.Values]);
 

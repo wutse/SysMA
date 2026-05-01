@@ -29,8 +29,6 @@ internal sealed class FakeSystemRepository : IMonitoredSystemRepository
         return Task.CompletedTask;
     }
 
-    public Task SetMaintenanceModeAsync(string systemId, bool active, CancellationToken ct = default)
-        => Task.CompletedTask;
 }
 
 internal sealed class FakeDashboardComponentRepository : IMonitoredComponentRepository

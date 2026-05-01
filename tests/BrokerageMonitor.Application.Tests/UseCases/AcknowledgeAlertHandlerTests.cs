@@ -27,8 +27,6 @@ internal sealed class AckAlert_SystemRepo : IMonitoredSystemRepository
     public Task UpsertAsync(MonitoredSystem system, CancellationToken ct = default)
         => Task.CompletedTask;
 
-    public Task SetMaintenanceModeAsync(string systemId, bool active, CancellationToken ct = default)
-        => Task.CompletedTask;
 }
 
 internal sealed class AckAlert_AlertRepo : IAlertRecordRepository

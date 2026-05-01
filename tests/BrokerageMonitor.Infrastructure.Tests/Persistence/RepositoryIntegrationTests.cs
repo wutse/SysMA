@@ -118,22 +118,6 @@ public sealed class MonitoredSystemRepositoryTests
     }
 
     [TestMethod]
-    public async Task SetMaintenanceModeAsync_ToTrue_UpdatesDatabase()
-    {
-        // Arrange
-        var system = CreateSystem("SYS-01");
-        await _repo.UpsertAsync(system);
-
-        // Act
-        await _repo.SetMaintenanceModeAsync("SYS-01", true);
-        var retrieved = await _repo.GetByIdAsync("SYS-01");
-
-        // Assert
-        Assert.IsNotNull(retrieved);
-        Assert.IsTrue(retrieved.IsMaintenanceActive);
-    }
-
-    [TestMethod]
     public async Task UpsertAsync_WithAlertRecipients_PreservesEmails()
     {
         // Arrange

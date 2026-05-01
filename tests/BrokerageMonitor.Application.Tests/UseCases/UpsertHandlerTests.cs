@@ -30,8 +30,6 @@ internal sealed class UpsertSys_SystemRepo : IMonitoredSystemRepository
         return Task.CompletedTask;
     }
 
-    public Task SetMaintenanceModeAsync(string systemId, bool active, CancellationToken ct = default)
-        => Task.CompletedTask;
 }
 
 // ---------------------------------------------------------------------------

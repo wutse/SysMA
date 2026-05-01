@@ -87,4 +87,63 @@ public sealed class MailParsingRuleTests
         Assert.IsEmpty(rule.SuccessKeywords);
         Assert.IsEmpty(rule.FailureKeywords);
     }
+
+    // ---- GetHashCode ----
+
+    [TestMethod]
+    public void GetHashCode_SameKeywords_ReturnsSameHash()
+    {
+        // Arrange
+        var r1 = new MailParsingRule("from@test.com", "Subject", ["OK"], ["FAIL"]);
+        var r2 = new MailParsingRule("from@test.com", "Subject", ["OK"], ["FAIL"]);
+
+        // Assert
+        Assert.AreEqual(r1.GetHashCode(), r2.GetHashCode());
+    }
+
+    [TestMethod]
+    public void GetHashCode_DifferentSuccessKeywords_ReturnsDifferentHash()
+    {
+        // Arrange — same from/subject but different success keywords
+        var r1 = new MailParsingRule("from@test.com", "Subject", ["OK"], ["FAIL"]);
+        var r2 = new MailParsingRule("from@test.com", "Subject", ["GOOD"], ["FAIL"]);
+
+        // Assert — probability of collision is negligible; distinct keywords should differ
+        Assert.AreNotEqual(r1.GetHashCode(), r2.GetHashCode());
+    }
+
+    [TestMethod]
+    public void GetHashCode_DifferentFailureKeywords_ReturnsDifferentHash()
+    {
+        // Arrange — same from/subject/success but different failure keywords
+        var r1 = new MailParsingRule("from@test.com", "Subject", ["OK"], ["FAIL"]);
+        var r2 = new MailParsingRule("from@test.com", "Subject", ["OK"], ["ERROR"]);
+
+        // Assert
+        Assert.AreNotEqual(r1.GetHashCode(), r2.GetHashCode());
+    }
+
+    [TestMethod]
+    public void GetHashCode_ConsistentWithEquals_WhenEqualReturnsSameHash()
+    {
+        // Arrange
+        var r1 = new MailParsingRule("a@b.com", "Re:", ["Pass"], ["Fail"]);
+        var r2 = new MailParsingRule("a@b.com", "Re:", ["Pass"], ["Fail"]);
+
+        // Assert — Equals contract: equal objects must have same hash
+        Assert.IsTrue(r1.Equals(r2));
+        Assert.AreEqual(r1.GetHashCode(), r2.GetHashCode());
+    }
+
+    [TestMethod]
+    public void GetHashCode_UseableAsHashSetKey_NoDegradedLookup()
+    {
+        // Arrange — two rules with same from/subject but different keywords
+        var r1 = new MailParsingRule("x@y.com", "Subj", ["A"], ["B"]);
+        var r2 = new MailParsingRule("x@y.com", "Subj", ["C"], ["D"]);
+        var set = new HashSet<MailParsingRule> { r1, r2 };
+
+        // Assert — both are stored as distinct entries
+        Assert.HasCount(2, set);
+    }
 }

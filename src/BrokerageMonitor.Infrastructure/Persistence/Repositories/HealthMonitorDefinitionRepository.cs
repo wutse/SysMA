@@ -52,6 +52,27 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
         return await BuildDefinitionsAsync(conn, rows, ct);
     }
 
+    public async Task<IReadOnlyList<HealthMonitorDefinition>> GetByWatchedComponentAsync(
+        string componentId, CancellationToken ct = default)
+    {
+        // HealthDefinitionComponents is a junction table keyed by (DefinitionId, ComponentId).
+        // Join to HealthMonitorDefinitions to get only active definitions watching this component.
+        using var conn = (SqliteConnection)_factory.CreateConnection();
+        conn.Open();
+
+        const string mainSql = """
+            SELECT d.*
+            FROM HealthMonitorDefinitions d
+            INNER JOIN HealthDefinitionComponents c ON c.DefinitionId = d.DefinitionId
+            WHERE c.ComponentId = @ComponentId
+              AND d.IsActive = 1;
+            """;
+        var rows = (await conn.QueryAsync<DefinitionRow>(
+            new CommandDefinition(mainSql, new { ComponentId = componentId }, cancellationToken: ct))).ToList();
+
+        return await BuildDefinitionsAsync(conn, rows, ct);
+    }
+
     public async Task UpsertAsync(HealthMonitorDefinition definition, CancellationToken ct = default)
     {
         using var conn = (SqliteConnection)_factory.CreateConnection();
@@ -63,10 +84,10 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
             const string mainSql = """
                 INSERT INTO HealthMonitorDefinitions
                     (DefinitionId, SystemId, Name, DeadlineTime, ScheduleType,
-                     CronExpression, DayOfWeek, EmailRecipients, TeamsWebhookUrl, SendOnFailure, IsActive)
+                     CronExpression, DayOfWeek, EmailRecipients, TeamsWebhookUrl, NotificationsEnabled, IsActive)
                 VALUES
                     (@DefinitionId, @SystemId, @Name, @DeadlineTime, @ScheduleType,
-                     @CronExpression, @DayOfWeek, @EmailRecipients, @TeamsWebhookUrl, @SendOnFailure, @IsActive)
+                     @CronExpression, @DayOfWeek, @EmailRecipients, @TeamsWebhookUrl, @NotificationsEnabled, @IsActive)
                 ON CONFLICT(DefinitionId) DO UPDATE SET
                     Name            = excluded.Name,
                     DeadlineTime    = excluded.DeadlineTime,
@@ -75,27 +96,27 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
                     DayOfWeek       = excluded.DayOfWeek,
                     EmailRecipients = excluded.EmailRecipients,
                     TeamsWebhookUrl = excluded.TeamsWebhookUrl,
-                    SendOnFailure   = excluded.SendOnFailure,
+                    NotificationsEnabled = excluded.NotificationsEnabled,
                     IsActive        = excluded.IsActive;
                 """;
 
             var defId = definition.DefinitionId.ToString();
             await conn.ExecuteAsync(new CommandDefinition(mainSql, new
             {
-                DefinitionId    = defId,
+                DefinitionId = defId,
                 definition.SystemId,
                 definition.Name,
-                DeadlineTime    = definition.DeadlineTime.ToString("HH:mm"),
-                ScheduleType    = definition.Schedule.ScheduleType.ToString(),
+                DeadlineTime = definition.DeadlineTime.ToString("HH:mm"),
+                ScheduleType = definition.Schedule.ScheduleType.ToString(),
                 definition.Schedule.CronExpression,
-                DayOfWeek       = definition.Schedule.DayOfWeek.HasValue
+                DayOfWeek = definition.Schedule.DayOfWeek.HasValue
                     ? (int?)definition.Schedule.DayOfWeek.Value
                     : null,
                 EmailRecipients = JsonSerializer.Serialize(
                     definition.EmailRecipients.Select(e => e.Value)),
                 definition.TeamsWebhookUrl,
-                SendOnFailure   = definition.NotificationsEnabled ? 1 : 0,
-                IsActive        = definition.IsActive ? 1 : 0
+                NotificationsEnabled = definition.NotificationsEnabled ? 1 : 0,
+                IsActive = definition.IsActive ? 1 : 0
             }, transaction: tx, cancellationToken: ct));
 
             // Refresh junction table
@@ -111,7 +132,7 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
             {
                 await conn.ExecuteAsync(new CommandDefinition(junctionSql, new
                 {
-                    DefinitionId  = defId,
+                    DefinitionId = defId,
                     wc.ComponentId,
                     ComponentType = wc.ComponentType.ToString()
                 }, transaction: tx, cancellationToken: ct));
@@ -204,22 +225,22 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
             watchedComponents,
             recipients,
             row.TeamsWebhookUrl,
-            notificationsEnabled: row.SendOnFailure == 1,
+            notificationsEnabled: row.NotificationsEnabled == 1,
             isActive: row.IsActive == 1);
     }
 
     private sealed record DefinitionRow(
-        string  DefinitionId,
-        string  SystemId,
-        string  Name,
-        string  DeadlineTime,
-        string  ScheduleType,
+        string DefinitionId,
+        string SystemId,
+        string Name,
+        string DeadlineTime,
+        string ScheduleType,
         string? CronExpression,
-        long?   DayOfWeek,
-        string  EmailRecipients,
+        long? DayOfWeek,
+        string EmailRecipients,
         string? TeamsWebhookUrl,
-        long    SendOnFailure,
-        long    IsActive);
+        long NotificationsEnabled,
+        long IsActive);
 
     private sealed record JunctionRow(
         string DefinitionId,

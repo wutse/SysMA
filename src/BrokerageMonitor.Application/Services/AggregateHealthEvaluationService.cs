@@ -65,11 +65,9 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
 
         var today = DateOnly.FromDateTime(DateTime.Today);
 
-        // Load all active definitions that watch this component
-        var definitions = await _definitionRepo.GetAllActiveAsync(ct).ConfigureAwait(false);
-        var watchingDefinitions = definitions
-            .Where(d => d.WatchedComponents.Any(w => w.ComponentId == evt.ComponentId))
-            .ToList();
+        // Load only active definitions that watch this specific component (avoids full table scan)
+        var watchingDefinitions = await _definitionRepo
+            .GetByWatchedComponentAsync(evt.ComponentId, ct).ConfigureAwait(false);
 
         if (watchingDefinitions.Count == 0)
             return;

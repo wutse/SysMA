@@ -28,6 +28,10 @@ internal sealed class DEC_DefinitionRepo : IHealthMonitorDefinitionRepository
         => Task.FromResult<IReadOnlyList<HealthMonitorDefinition>>(
             [.. _store.Where(d => d.SystemId == systemId)]);
 
+    public Task<IReadOnlyList<HealthMonitorDefinition>> GetByWatchedComponentAsync(string componentId, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<HealthMonitorDefinition>>(
+            [.. _store.Where(d => d.IsActive && d.WatchedComponents.Any(w => w.ComponentId == componentId))]);
+
     public Task UpsertAsync(HealthMonitorDefinition definition, CancellationToken ct = default)
     {
         _store.RemoveAll(d => d.DefinitionId == definition.DefinitionId);

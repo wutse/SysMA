@@ -1,8 +1,7 @@
 @page "/management"
 @rendermode InteractiveServer
 @implements IDisposable
-@inject IMonitoredSystemRepository SystemRepo
-@inject IMonitoredComponentRepository ComponentRepo
+@inject GetSystemsWithComponentsQueryHandler SystemsHandler
 @inject UpsertMonitoredSystemHandler UpsertSystemHandler
 @inject UpsertMonitoredComponentHandler UpsertComponentHandler
 @inject ToggleMaintenanceModeHandler MaintenanceHandler
@@ -12,7 +11,6 @@
 @using BrokerageMonitor.Application.UseCases.Management
 @using BrokerageMonitor.Application.UseCases.Maintenance
 @using BrokerageMonitor.Domain.Aggregates
-@using BrokerageMonitor.Domain.Repositories
 @using BrokerageMonitor.Domain.ValueObjects
 @using BrokerageMonitor.Web.Services
 @using Microsoft.Extensions.Logging
@@ -368,15 +366,13 @@ else
         _loading = true;
         try
         {
-            var allSystems = await SystemRepo.GetAllActiveAsync();
-            _systems = allSystems.OrderBy(s => s.SystemId).ToList();
-
-            _componentsBySystem = [];
-            foreach (var sys in _systems)
-            {
-                var comps = await ComponentRepo.GetBySystemIdAsync(sys.SystemId);
-                _componentsBySystem[sys.SystemId] = comps.OrderBy(c => c.Name).ToList();
-            }
+            var result = await SystemsHandler.HandleAsync();
+            _systems = result.Systems.ToList();
+            _componentsBySystem = result.ComponentsBySystem
+                .ToDictionary(
+                    kv => kv.Key,
+                    kv => kv.Value.ToList(),
+                    StringComparer.Ordinal);
         }
         catch (Exception ex)
         {

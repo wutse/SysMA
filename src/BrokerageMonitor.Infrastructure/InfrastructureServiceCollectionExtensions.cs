@@ -75,9 +75,7 @@ public static class InfrastructureServiceCollectionExtensions
 
     /// <summary>
     /// Registers <see cref="SignalRNotificationService"/> as the singleton
-    /// <see cref="IRealtimeNotificationService"/> implementation, and
-    /// <see cref="MonitorBroadcaster"/> as the singleton <see cref="IMonitorBroadcaster"/>
-    /// for Blazor Server in-process event broadcasting.
+    /// <see cref="IRealtimeNotificationService"/> implementation.
     /// Requires that <c>services.AddSignalR()</c> has been called by the host.
     /// </summary>
     public static IServiceCollection AddRealtimeNotifications(this IServiceCollection services)

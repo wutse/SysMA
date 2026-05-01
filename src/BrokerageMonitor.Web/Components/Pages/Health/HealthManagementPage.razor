@@ -2,14 +2,14 @@
 @rendermode InteractiveServer
 @implements IDisposable
 @inject GetHealthDefinitionsQueryHandler HealthHandler
-@inject IMonitoredSystemRepository SystemRepo
+@inject GetActiveSystemIdsQueryHandler SystemIdsHandler
 @inject IMonitorBroadcaster Broadcaster
 @inject ILogger<HealthManagementPage> Logger
 
 @using BrokerageMonitor.Application.DTOs
 @using BrokerageMonitor.Application.Services
 @using BrokerageMonitor.Application.UseCases.Health
-@using BrokerageMonitor.Domain.Repositories
+@using BrokerageMonitor.Application.UseCases.Management
 @using BrokerageMonitor.Domain.ValueObjects
 @using Microsoft.Extensions.Logging
 
@@ -146,8 +146,8 @@ else
 
     private async Task LoadSystemsAsync()
     {
-        var systems = await SystemRepo.GetAllActiveAsync();
-        _systems = systems.Select(s => s.SystemId).ToList();
+        var systems = await SystemIdsHandler.HandleAsync();
+        _systems = systems.ToList();
     }
 
     private async Task LoadDefinitionsAsync()

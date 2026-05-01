@@ -157,14 +157,14 @@ public sealed class DailyExecutionTests
     public void Rehydrate_AllFields_RestoresExactValues()
     {
         // Arrange
-        var executionId    = Guid.NewGuid();
-        var definitionId   = Guid.NewGuid();
-        var createdAt      = new DateTimeOffset(2026, 4, 1, 0, 0, 0, TimeSpan.Zero);
-        var evaluatedAt    = new DateTimeOffset(2026, 4, 1, 14, 0, 0, TimeSpan.Zero);
-        var notifSentAt    = new DateTimeOffset(2026, 4, 1, 14, 1, 0, TimeSpan.Zero);
-        var date           = new DateOnly(2026, 4, 1);
+        var executionId = Guid.NewGuid();
+        var definitionId = Guid.NewGuid();
+        var createdAt = new DateTimeOffset(2026, 4, 1, 0, 0, 0, TimeSpan.Zero);
+        var evaluatedAt = new DateTimeOffset(2026, 4, 1, 14, 0, 0, TimeSpan.Zero);
+        var notifSentAt = new DateTimeOffset(2026, 4, 1, 14, 1, 0, TimeSpan.Zero);
+        var date = new DateOnly(2026, 4, 1);
         string[] completed = ["COMP-01", "COMP-02"];
-        string[] failed    = ["COMP-03"];
+        string[] failed = ["COMP-03"];
 
         // Act
         var execution = DailyExecution.Rehydrate(
@@ -175,17 +175,17 @@ public sealed class DailyExecutionTests
             "missed window", notifSentAt);
 
         // Assert
-        Assert.AreEqual(executionId,                      execution.ExecutionId);
-        Assert.AreEqual(definitionId,                     execution.DefinitionId);
-        Assert.AreEqual("SYS-01",                         execution.SystemId);
-        Assert.AreEqual(date,                             execution.ExecutionDate);
-        Assert.AreEqual(DailyExecutionStatus.Failed,      execution.Status);
-        Assert.AreEqual(createdAt,                        execution.CreatedAt);
-        Assert.AreEqual(evaluatedAt,                      execution.EvaluatedAt);
-        Assert.AreEqual(notifSentAt,                      execution.NotificationSentAt);
-        Assert.AreEqual("missed window",                  execution.MissedReason);
-        Assert.HasCount(2,  execution.CompletedComponents);
-        Assert.HasCount(1,  execution.FailedComponents);
+        Assert.AreEqual(executionId, execution.ExecutionId);
+        Assert.AreEqual(definitionId, execution.DefinitionId);
+        Assert.AreEqual("SYS-01", execution.SystemId);
+        Assert.AreEqual(date, execution.ExecutionDate);
+        Assert.AreEqual(DailyExecutionStatus.Failed, execution.Status);
+        Assert.AreEqual(createdAt, execution.CreatedAt);
+        Assert.AreEqual(evaluatedAt, execution.EvaluatedAt);
+        Assert.AreEqual(notifSentAt, execution.NotificationSentAt);
+        Assert.AreEqual("missed window", execution.MissedReason);
+        Assert.HasCount(2, execution.CompletedComponents);
+        Assert.HasCount(1, execution.FailedComponents);
         Assert.Contains("COMP-01", execution.CompletedComponents);
         Assert.Contains("COMP-03", execution.FailedComponents);
     }
@@ -238,5 +238,35 @@ public sealed class DailyExecutionTests
 
         // Assert
         Assert.IsTrue(execution.IsTerminal);
+    }
+
+    [TestMethod]
+    public void Complete_DuplicateFailedComponents_DeduplicatesBeforeStoring()
+    {
+        // Arrange
+        var execution = CreateInProgress();
+        string[] failedWithDuplicates = ["COMP-01", "COMP-02", "COMP-01", "comp-02"];
+
+        // Act
+        execution.Complete(DailyExecutionStatus.Failed, DateTimeOffset.UtcNow, failedWithDuplicates);
+
+        // Assert — only two unique IDs (case-insensitive)
+        Assert.HasCount(2, execution.FailedComponents);
+        Assert.Contains("COMP-01", execution.FailedComponents);
+        Assert.Contains("COMP-02", execution.FailedComponents);
+    }
+
+    [TestMethod]
+    public void Complete_DuplicatesCaseInsensitive_TreatedAsSameComponent()
+    {
+        // Arrange
+        var execution = CreateInProgress();
+        string[] mixedCase = ["COMP-A", "comp-a", "Comp-A"];
+
+        // Act
+        execution.Complete(DailyExecutionStatus.Failed, DateTimeOffset.UtcNow, mixedCase);
+
+        // Assert — only one entry for the same logical component
+        Assert.HasCount(1, execution.FailedComponents);
     }
 }

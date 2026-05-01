@@ -3,14 +3,14 @@
 @rendermode InteractiveServer
 @inject GetHealthDefinitionsQueryHandler HealthHandler
 @inject UpsertHealthMonitorDefinitionHandler UpsertHandler
-@inject IMonitoredSystemRepository SystemRepo
-@inject IMonitoredComponentRepository ComponentRepo
+@inject GetActiveSystemIdsQueryHandler SystemIdsHandler
+@inject GetActiveComponentsQueryHandler ComponentsHandler
 @inject NavigationManager Nav
 @inject ILogger<HealthDefinitionEditorPage> Logger
 
 @using BrokerageMonitor.Application.DTOs
 @using BrokerageMonitor.Application.UseCases.Health
-@using BrokerageMonitor.Domain.Repositories
+@using BrokerageMonitor.Application.UseCases.Management
 @using BrokerageMonitor.Domain.ValueObjects
 @using Microsoft.Extensions.Logging
 @using System.ComponentModel.DataAnnotations
@@ -208,16 +208,14 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        var systemsTask = SystemRepo.GetAllActiveAsync();
-        var componentsTask = ComponentRepo.GetAllActiveAsync();
+        var systemsTask = SystemIdsHandler.HandleAsync();
+        var componentsTask = ComponentsHandler.HandleAsync();
 
         await Task.WhenAll(systemsTask, componentsTask);
 
-        _systems = systemsTask.Result.Select(s => s.SystemId).ToList();
+        _systems = systemsTask.Result.ToList();
         _allComponents = componentsTask.Result
             .Select(c => new ComponentSummary(c.ComponentId, c.Name, c.SystemId, c.ComponentType))
-            .OrderBy(c => c.SystemId)
-            .ThenBy(c => c.Name)
             .ToList();
 
         if (_isEdit)

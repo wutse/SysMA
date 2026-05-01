@@ -51,5 +51,15 @@ public sealed class MailParsingRule : IEquatable<MailParsingRule>
 
     public override bool Equals(object? obj) => Equals(obj as MailParsingRule);
 
-    public override int GetHashCode() => HashCode.Combine(FromPattern, SubjectPattern);
+    public override int GetHashCode()
+    {
+        var hc = new HashCode();
+        hc.Add(FromPattern);
+        hc.Add(SubjectPattern);
+        foreach (var k in SuccessKeywords)
+            hc.Add(k, StringComparer.OrdinalIgnoreCase);
+        foreach (var k in FailureKeywords)
+            hc.Add(k, StringComparer.OrdinalIgnoreCase);
+        return hc.ToHashCode();
+    }
 }

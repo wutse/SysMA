@@ -2,12 +2,12 @@
 @rendermode InteractiveServer
 @inject GetExecutionHistoryQueryHandler HistoryHandler
 @inject GetAuditLogsQueryHandler AuditHandler
-@inject IMonitoredSystemRepository SystemRepo
+@inject GetActiveSystemIdsQueryHandler SystemIdsHandler
 @inject ILogger<HistoryPage> Logger
 
 @using BrokerageMonitor.Application.UseCases.History
+@using BrokerageMonitor.Application.UseCases.Management
 @using BrokerageMonitor.Domain.ReadModels
-@using BrokerageMonitor.Domain.Repositories
 @using BrokerageMonitor.Domain.ValueObjects
 @using Microsoft.Extensions.Logging
 
@@ -179,8 +179,7 @@ else
     {
         try
         {
-            var allSystems = await SystemRepo.GetAllActiveAsync();
-            _systems = allSystems.Select(s => s.SystemId).OrderBy(id => id).ToList();
+            _systems = (await SystemIdsHandler.HandleAsync()).ToList();
         }
         catch (Exception ex)
         {

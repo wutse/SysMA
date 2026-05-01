@@ -15,6 +15,11 @@ public interface IAlertRecordRepository
     Task<IReadOnlySet<string>> GetSystemsWithUnacknowledgedAlertAsync(CancellationToken ct = default);
 
     Task AddAsync(AlertRecord alert, CancellationToken ct = default);
+    /// <summary>
+    /// Bulk-acknowledges all active alerts for the given system.
+    /// Implementations MUST filter with <c>WHERE AcknowledgedAt IS NULL</c> so that
+    /// already-acknowledged records are never mutated.
+    /// </summary>
     Task AcknowledgeBySystemAsync(string systemId, string operatorName, CancellationToken ct = default);
     Task<IReadOnlyList<AlertRecord>> GetHistoryAsync(
         string? systemId, DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default);

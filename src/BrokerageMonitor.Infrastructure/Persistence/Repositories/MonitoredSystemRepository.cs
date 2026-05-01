@@ -55,33 +55,13 @@ public sealed class MonitoredSystemRepository : IMonitoredSystemRepository
         {
             system.SystemId,
             system.Name,
-            MarketStart         = system.MarketSession.StartTime.ToString("HH:mm"),
-            MarketEnd           = system.MarketSession.EndTime.ToString("HH:mm"),
-            AlertRecipients     = JsonSerializer.Serialize(system.AlertRecipients.Select(e => e.Value)),
+            MarketStart = system.MarketSession.StartTime.ToString("HH:mm"),
+            MarketEnd = system.MarketSession.EndTime.ToString("HH:mm"),
+            AlertRecipients = JsonSerializer.Serialize(system.AlertRecipients.Select(e => e.Value)),
             IsMaintenanceActive = system.IsMaintenanceActive ? 1 : 0,
             system.MaintenanceOperator,
-            IsActive            = system.IsActive ? 1 : 0,
-            Now                 = DateTimeOffset.UtcNow.ToString("O")
-        }, cancellationToken: ct));
-    }
-
-    public async Task SetMaintenanceModeAsync(string systemId, bool active, CancellationToken ct = default)
-    {
-        using var conn = _factory.CreateConnection();
-        const string sql = """
-            UPDATE MonitoredSystems
-            SET IsMaintenanceActive = @Active,
-                MaintenanceOperator = @Operator,
-                UpdatedAt           = @Now
-            WHERE SystemId = @SystemId;
-            """;
-
-        await conn.ExecuteAsync(new CommandDefinition(sql, new
-        {
-            Active   = active ? 1 : 0,
-            Operator = active ? "System" : (string?)null,
-            Now      = DateTimeOffset.UtcNow.ToString("O"),
-            SystemId = systemId
+            IsActive = system.IsActive ? 1 : 0,
+            Now = DateTimeOffset.UtcNow.ToString("O")
         }, cancellationToken: ct));
     }
 
@@ -111,9 +91,9 @@ public sealed class MonitoredSystemRepository : IMonitoredSystemRepository
         string MarketStart,
         string MarketEnd,
         string AlertRecipients,
-        long   IsMaintenanceActive,
+        long IsMaintenanceActive,
         string? MaintenanceOperator,
-        long   IsActive,
+        long IsActive,
         string CreatedAt,
         string UpdatedAt);
 }

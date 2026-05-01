@@ -101,7 +101,7 @@ public sealed class DailyExecution
         EvaluatedAt = evaluatedAt;
 
         if (failedComponents is not null)
-            _failedComponents.AddRange(failedComponents);
+            _failedComponents.AddRange(failedComponents.Distinct(StringComparer.OrdinalIgnoreCase));
     }
 
     public void RecordNotificationSent(DateTimeOffset sentAt) => NotificationSentAt = sentAt;
@@ -125,14 +125,14 @@ public sealed class DailyExecution
     {
         var execution = new DailyExecution
         {
-            ExecutionId        = executionId,
-            DefinitionId       = definitionId,
-            SystemId           = systemId,
-            ExecutionDate      = executionDate,
-            Status             = status,
-            CreatedAt          = createdAt,
-            EvaluatedAt        = evaluatedAt,
-            MissedReason       = missedReason,
+            ExecutionId = executionId,
+            DefinitionId = definitionId,
+            SystemId = systemId,
+            ExecutionDate = executionDate,
+            Status = status,
+            CreatedAt = createdAt,
+            EvaluatedAt = evaluatedAt,
+            MissedReason = missedReason,
             NotificationSentAt = notificationSentAt,
         };
 
