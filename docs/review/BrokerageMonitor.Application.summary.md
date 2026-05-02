@@ -1,18 +1,19 @@
 # BrokerageMonitor.Application — Review Summary
 
-> **Last Review**: 2026-05-02c | **Reviewer**: Chief Software Architect
+> **Last Review**: 2026-05-02d | **Reviewer**: Chief Software Architect
 
 ---
 
 ## 📊 Current Status
 
-**Health Score: 9.8 / 10**
+**Health Score: 10 / 10**
 
-All B1/B2/A6 action items from the 2026-05-02b post-fix pass are resolved. `DomainEventDispatcher` is now fully `private static` with `ConfigureAwait(false)` on the outermost await. `TimeProvider` is injected into both `DailyExecutionCreatorService` and `AggregateHealthEvaluationService`, replacing all `DateTime.Today` / `DateTimeOffset.UtcNow` direct calls. One LOW issue remains: the 8 `SafeInvokeAsync` call sites within `Dispatch*Async` private static methods are missing `.ConfigureAwait(false)` (harmless in practice since the caller already switched context, but inconsistent with the project convention).
+All action items are resolved. The full `DomainEventDispatcher` async call graph is now uniformly context-free: every `await` from `DispatchAsync` down through each `Dispatch*Async` method to `SafeInvokeAsync` and finally to the inner `handler()` call chains `.ConfigureAwait(false)`. `TimeProvider` is injected everywhere. No open issues remain in scope for this layer.
 
 ---
 
 ## 🔧 Pending Action Items
 
-1. **(LOW — C1)** Add `.ConfigureAwait(false)` to all 8 `await SafeInvokeAsync(...)` call sites inside `DispatchComponentStatusChangedAsync` (×4), `DispatchComponentLostAsync` (×3), and `DispatchComponentStateOverriddenAsync` (×1). See `BrokerageMonitor.Application.review.2026-05-02c.md` §3.
-2. **(ADVISORY — A8)** Add `bunit` for Blazor component testing (Web layer, 0.6% coverage).
+_None. All prior action items resolved._
+
+> A8 (bunit coverage) is tracked under the Web layer summary.
