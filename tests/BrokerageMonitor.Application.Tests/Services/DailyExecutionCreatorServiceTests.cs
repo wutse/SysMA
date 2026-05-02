@@ -191,7 +191,8 @@ public sealed class DailyExecutionCreatorServiceTests
             componentStateRepo,
             cache,
             realtime,
-            NullLogger<DailyExecutionCreatorService>.Instance);
+            NullLogger<DailyExecutionCreatorService>.Instance,
+            TimeProvider.System);
 
         return (sut, definitions, executions, cache, realtime);
     }

@@ -28,6 +28,9 @@ public static class ApplicationServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
+        // ---- Time abstraction (singleton — allows tests to substitute a fake clock) ----
+        services.TryAddSingleton(TimeProvider.System);
+
         // ---- In-memory state caches (singleton) ----
         services.AddSingleton<ComponentStateCache>();
         services.AddSingleton<IComponentStateCache>(sp =>

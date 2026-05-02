@@ -20,7 +20,6 @@ namespace BrokerageMonitor.Application.Services;
 /// </summary>
 public sealed class DomainEventDispatcher : IDomainEventDispatcher
 {
-    private readonly ILogger<DomainEventDispatcher> _logger;
     private readonly IReadOnlyDictionary<Type, Func<IDomainEvent, CancellationToken, Task>> _handlers;
 
     public DomainEventDispatcher(
@@ -31,21 +30,19 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
         IComponentStateCache stateCache,
         ILogger<DomainEventDispatcher> logger)
     {
-        _logger = logger;
-
         _handlers = new Dictionary<Type, Func<IDomainEvent, CancellationToken, Task>>
         {
             [typeof(ComponentStatusChanged)] = (e, ct) =>
                 DispatchComponentStatusChangedAsync((ComponentStatusChanged)e, ct,
-                    alertEvaluation, healthEvaluation, realtimeNotification, auditLogger),
+                    alertEvaluation, healthEvaluation, realtimeNotification, auditLogger, logger),
 
             [typeof(ComponentLost)] = (e, ct) =>
                 DispatchComponentLostAsync((ComponentLost)e, ct,
-                    alertEvaluation, realtimeNotification, auditLogger, stateCache),
+                    alertEvaluation, realtimeNotification, auditLogger, stateCache, logger),
 
             [typeof(ComponentStateOverridden)] = (e, ct) =>
                 DispatchComponentStateOverriddenAsync((ComponentStateOverridden)e, ct,
-                    alertEvaluation),
+                    alertEvaluation, logger),
         };
     }
 
@@ -56,7 +53,7 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
         ArgumentNullException.ThrowIfNull(@event);
 
         if (_handlers.TryGetValue(@event.GetType(), out var handler))
-            await handler(@event, ct);
+            await handler(@event, ct).ConfigureAwait(false);
 
         // Events with no registered handler are intentionally unhandled at this layer;
         // infrastructure services (HeartbeatTimeoutMonitor, SignalR) handle them directly.
@@ -66,36 +63,38 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
     // Private dispatch methods — each handler is isolated via SafeInvokeAsync
     // -------------------------------------------------------------------------
 
-    private async Task DispatchComponentStatusChangedAsync(
+    private static async Task DispatchComponentStatusChangedAsync(
         ComponentStatusChanged evt, CancellationToken ct,
         IAlertEvaluationService alertEvaluation,
         IAggregateHealthEvaluationService healthEvaluation,
         IRealtimeNotificationService realtimeNotification,
-        IAuditLogger auditLogger)
+        IAuditLogger auditLogger,
+        ILogger logger)
     {
         await SafeInvokeAsync(
             () => alertEvaluation.EvaluateAsync(evt, ct),
-            nameof(IAlertEvaluationService));
+            nameof(IAlertEvaluationService), logger);
 
         await SafeInvokeAsync(
             () => healthEvaluation.UpdateComponentProgressAsync(evt, ct),
-            nameof(IAggregateHealthEvaluationService));
+            nameof(IAggregateHealthEvaluationService), logger);
 
         await SafeInvokeAsync(
             () => realtimeNotification.NotifyComponentStatusChangedAsync(evt, ct),
-            nameof(IRealtimeNotificationService));
+            nameof(IRealtimeNotificationService), logger);
 
         await SafeInvokeAsync(
             () => auditLogger.LogStatusChangedAsync(
                 evt.SystemId, evt.ComponentId,
                 evt.PreviousStatus, evt.NewStatus,
                 evt.OccurredAt, ct),
-            nameof(IAuditLogger));
+            nameof(IAuditLogger), logger);
     }
 
-    private async Task DispatchComponentStateOverriddenAsync(
+    private static async Task DispatchComponentStateOverriddenAsync(
         ComponentStateOverridden evt, CancellationToken ct,
-        IAlertEvaluationService alertEvaluation)
+        IAlertEvaluationService alertEvaluation,
+        ILogger logger)
     {
         // Route through AlertEvaluationService via a synthetic ComponentStatusChanged
         // so active alerts are cleared and new ones are raised for the overridden state.
@@ -108,15 +107,16 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
 
         await SafeInvokeAsync(
             () => alertEvaluation.EvaluateAsync(syntheticChange, ct),
-            nameof(IAlertEvaluationService));
+            nameof(IAlertEvaluationService), logger);
     }
 
-    private async Task DispatchComponentLostAsync(
+    private static async Task DispatchComponentLostAsync(
         ComponentLost evt, CancellationToken ct,
         IAlertEvaluationService alertEvaluation,
         IRealtimeNotificationService realtimeNotification,
         IAuditLogger auditLogger,
-        IComponentStateCache stateCache)
+        IComponentStateCache stateCache,
+        ILogger logger)
     {
         // Look up actual previous status from the in-memory cache so audit entries
         // record the correct previous state instead of always logging Unknown.
@@ -133,11 +133,11 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
 
         await SafeInvokeAsync(
             () => alertEvaluation.EvaluateAsync(syntheticChange, ct),
-            nameof(IAlertEvaluationService));
+            nameof(IAlertEvaluationService), logger);
 
         await SafeInvokeAsync(
             () => realtimeNotification.NotifyComponentStatusChangedAsync(syntheticChange, ct),
-            nameof(IRealtimeNotificationService));
+            nameof(IRealtimeNotificationService), logger);
 
         await SafeInvokeAsync(
             () => auditLogger.LogStatusChangedAsync(
@@ -145,29 +145,29 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
                 previousStatus,
                 ComponentStatus.Lost,
                 evt.OccurredAt, ct),
-            nameof(IAuditLogger));
+            nameof(IAuditLogger), logger);
     }
 
     /// <summary>
     /// Executes <paramref name="handler"/> and swallows any exception,
     /// logging a warning so other subscribers are not affected (US-028).
     /// </summary>
-    private async Task SafeInvokeAsync(Func<Task> handler, string handlerName)
+    private static async Task SafeInvokeAsync(Func<Task> handler, string handlerName, ILogger logger)
     {
         try
         {
-            await handler();
+            await handler().ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             // Respect cancellation but still allow other handlers to run.
-            _logger.LogWarning(
+            logger.LogWarning(
                 "Handler {HandlerName} was cancelled during event dispatch.",
                 handlerName);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex,
+            logger.LogWarning(ex,
                 "Handler {HandlerName} threw an unhandled exception during event dispatch. " +
                 "Other subscribers are unaffected.",
                 handlerName);

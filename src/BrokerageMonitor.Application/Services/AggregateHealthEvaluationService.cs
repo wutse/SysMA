@@ -27,6 +27,7 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
     private readonly IRealtimeNotificationService _realtime;
     private readonly IMonitorBroadcaster _broadcaster;
     private readonly ILogger<AggregateHealthEvaluationService> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public AggregateHealthEvaluationService(
         IHealthMonitorDefinitionRepository definitionRepo,
@@ -38,7 +39,8 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
         ITeamsNotificationService teams,
         IRealtimeNotificationService realtime,
         IMonitorBroadcaster broadcaster,
-        ILogger<AggregateHealthEvaluationService> logger)
+        ILogger<AggregateHealthEvaluationService> logger,
+        TimeProvider timeProvider)
     {
         _definitionRepo = definitionRepo;
         _executionRepo = executionRepo;
@@ -50,6 +52,7 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
         _realtime = realtime;
         _broadcaster = broadcaster;
         _logger = logger;
+        _timeProvider = timeProvider;
     }
 
     // -----------------------------------------------------------------------
@@ -63,7 +66,7 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
     {
         ArgumentNullException.ThrowIfNull(evt);
 
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var today = DateOnly.FromDateTime(_timeProvider.GetLocalNow().DateTime);
 
         // Load only active definitions that watch this specific component (avoids full table scan)
         var watchingDefinitions = await _definitionRepo
@@ -115,7 +118,7 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
             return;
         }
 
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var today = DateOnly.FromDateTime(_timeProvider.GetLocalNow().DateTime);
         var execution = await _executionRepo
             .GetByDefinitionAndDateAsync(definitionId, today, ct)
             .ConfigureAwait(false);
@@ -234,7 +237,7 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
         IReadOnlyList<string> failedComponents,
         CancellationToken ct)
     {
-        var evaluatedAt = DateTimeOffset.UtcNow;
+        var evaluatedAt = _timeProvider.GetUtcNow();
         execution.Complete(terminalStatus, evaluatedAt, failedComponents);
 
         DateTimeOffset? notificationSentAt = null;
@@ -305,7 +308,7 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
             try
             {
                 await _email.SendHealthSummaryAsync(request, ct).ConfigureAwait(false);
-                notificationSentAt = DateTimeOffset.UtcNow;
+                notificationSentAt = _timeProvider.GetUtcNow();
                 _logger.LogInformation(
                     "Health summary email sent for execution {ExecutionId}.", execution.ExecutionId);
             }
@@ -326,7 +329,7 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
             {
                 await _teams.SendHealthSummaryAsync(request, definition.TeamsWebhookUrl, ct)
                     .ConfigureAwait(false);
-                notificationSentAt ??= DateTimeOffset.UtcNow;
+                notificationSentAt ??= _timeProvider.GetUtcNow();
                 _logger.LogInformation(
                     "Teams notification sent for execution {ExecutionId}.", execution.ExecutionId);
             }
@@ -368,7 +371,7 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
             title: title,
             body: $"系統：{definition.SystemId}{failedList}",
             notificationType: notificationType,
-            sentAt: DateTimeOffset.UtcNow);
+            sentAt: _timeProvider.GetUtcNow());
 
         await _inboxRepo.AddAsync(inboxItem, ct).ConfigureAwait(false);
     }
@@ -385,7 +388,7 @@ public sealed class AggregateHealthEvaluationService : IAggregateHealthEvaluatio
             title: $"[通知失敗] {definition.Name} ({execution.ExecutionDate:yyyy-MM-dd})",
             body: $"系統：{definition.SystemId} — 通知發送失敗，請手動檢查。",
             notificationType: NotificationType.NotificationDeliveryFailed,
-            sentAt: DateTimeOffset.UtcNow);
+            sentAt: _timeProvider.GetUtcNow());
 
         await _inboxRepo.AddAsync(inboxItem, ct).ConfigureAwait(false);
     }

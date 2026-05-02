@@ -322,7 +322,8 @@ public sealed class AggregateHealthEvaluationServiceTests
             teams,
             realtime,
             broadcaster,
-            NullLogger<AggregateHealthEvaluationService>.Instance);
+            NullLogger<AggregateHealthEvaluationService>.Instance,
+            TimeProvider.System);
 
         return (sut, definitions, executions, systems, componentStates, inbox, email, teams, realtime, broadcaster);
     }

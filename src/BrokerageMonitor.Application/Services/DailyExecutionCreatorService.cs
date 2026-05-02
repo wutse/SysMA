@@ -18,6 +18,7 @@ public sealed class DailyExecutionCreatorService : IDailyExecutionCreatorService
     private readonly IComponentStateCache _stateCache;
     private readonly IRealtimeNotificationService _realtime;
     private readonly ILogger<DailyExecutionCreatorService> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public DailyExecutionCreatorService(
         IHealthMonitorDefinitionRepository definitionRepo,
@@ -25,7 +26,8 @@ public sealed class DailyExecutionCreatorService : IDailyExecutionCreatorService
         IComponentStateRepository componentStateRepo,
         IComponentStateCache stateCache,
         IRealtimeNotificationService realtime,
-        ILogger<DailyExecutionCreatorService> logger)
+        ILogger<DailyExecutionCreatorService> logger,
+        TimeProvider timeProvider)
     {
         _definitionRepo = definitionRepo;
         _executionRepo = executionRepo;
@@ -33,6 +35,7 @@ public sealed class DailyExecutionCreatorService : IDailyExecutionCreatorService
         _stateCache = stateCache;
         _realtime = realtime;
         _logger = logger;
+        _timeProvider = timeProvider;
     }
 
     /// <inheritdoc/>
@@ -59,9 +62,10 @@ public sealed class DailyExecutionCreatorService : IDailyExecutionCreatorService
     /// <inheritdoc/>
     public async Task RecoverTodayAsync(CancellationToken ct = default)
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var localNow = _timeProvider.GetLocalNow();
+        var today = DateOnly.FromDateTime(localNow.DateTime);
         var definitions = await _definitionRepo.GetAllActiveAsync(ct).ConfigureAwait(false);
-        var now = TimeOnly.FromDateTime(DateTime.Now);
+        var now = TimeOnly.FromDateTime(localNow.DateTime);
 
         foreach (var definition in definitions)
         {
@@ -142,7 +146,7 @@ public sealed class DailyExecutionCreatorService : IDailyExecutionCreatorService
                 continue;
 
             var previous = state.Status;
-            state.UpdateStatus(ComponentStatus.Idle, DateTimeOffset.UtcNow);
+            state.UpdateStatus(ComponentStatus.Idle, _timeProvider.GetUtcNow());
             _stateCache.SetState(state);
 
             await _componentStateRepo.UpsertAsync(state, ct).ConfigureAwait(false);
