@@ -43,4 +43,25 @@ Please structure your review response as follows:
 ## Output Standards
 - **Diagrams**: All `mermaid` diagrams must follow the rules in `.github/skills/gen-mermaid-diagram/SKILL.md`.
 - **C# Conventions**: Use C# 12 / .NET 8; follow Clean Architecture naming conventions.
-- **File Management**: Save documents in `docs/review/`, named after the project (e.g., `BrokerageMonitor.Domain.review.md`).
+- **File Management**: Follow the two-file strategy below.
+
+## 📁 File Management Strategy
+
+### Per-Review File (historical record)
+- **Path**: `docs/review/{ProjectName}.review.{YYYY-MM-DD}.md`
+- **Example**: `docs/review/BrokerageMonitor.Domain.review.2026-05-02.md`
+- **Content**: Full review output — Health Score, Strengths, Critical Violations, Refactoring Suggestions, and Implementation Examples.
+- **Rule**: Never overwrite. Each review session creates a new dated file.
+
+### Project Summary File (living document)
+- **Path**: `docs/review/{ProjectName}.summary.md`
+- **Example**: `docs/review/BrokerageMonitor.Domain.summary.md`
+- **Content**: Only the following two sections — rewritten on every review:
+  1. **📊 Current Status** — latest Health Score and one-paragraph assessment.
+  2. **🔧 Pending Action Items** — numbered list of unresolved issues that still require attention. Remove items once resolved.
+- **Rule**: Do NOT include historical findings or resolved items. Keep it concise and actionable.
+
+### Cross-Project Summary File
+- After completing reviews for multiple projects in one session, update `docs/review/review.summary.md`:
+  - One row per project: Project name | Latest review date | Health Score | Open action item count
+  - Keep only the current snapshot; move prior snapshots to the relevant dated review files.
