@@ -31,6 +31,7 @@ public sealed class OverrideComponentStateHandler
     private readonly IDomainEventDispatcher _eventDispatcher;
     private readonly IAuditLogger _auditLogger;
     private readonly IRealtimeNotificationService _realtimeNotification;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<OverrideComponentStateHandler> _logger;
 
     public OverrideComponentStateHandler(
@@ -40,6 +41,7 @@ public sealed class OverrideComponentStateHandler
         IDomainEventDispatcher eventDispatcher,
         IAuditLogger auditLogger,
         IRealtimeNotificationService realtimeNotification,
+        TimeProvider timeProvider,
         ILogger<OverrideComponentStateHandler> logger)
     {
         _componentRepository = componentRepository;
@@ -48,6 +50,7 @@ public sealed class OverrideComponentStateHandler
         _eventDispatcher = eventDispatcher;
         _auditLogger = auditLogger;
         _realtimeNotification = realtimeNotification;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -81,7 +84,7 @@ public sealed class OverrideComponentStateHandler
             return;
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
 
         var state = await _stateRepository.GetByComponentIdAsync(command.ComponentId, ct)
                     ?? new ComponentState(command.ComponentId);

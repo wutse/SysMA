@@ -156,6 +156,7 @@ public sealed class OverrideComponentStateHandlerTests
             _dispatcher,
             _auditLogger,
             _realtimeService,
+            TimeProvider.System,
             NullLogger<OverrideComponentStateHandler>.Instance);
 
         _componentRepo.Add(new MonitoredComponent("COMP-1", "SYS-1", "TestService", ComponentType.Service, "zmq.test", 30));

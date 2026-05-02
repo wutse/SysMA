@@ -30,7 +30,7 @@ internal sealed class GetAlerts_AlertRepo : IAlertRecordRepository
   public Task AddAsync(AlertRecord alert, CancellationToken ct = default)
       => Task.CompletedTask;
 
-  public Task AcknowledgeBySystemAsync(string systemId, string operatorName, CancellationToken ct = default)
+  public Task AcknowledgeBySystemAsync(string systemId, string operatorName, DateTimeOffset acknowledgedAt, CancellationToken ct = default)
       => Task.CompletedTask;
 
   public Task<IReadOnlyList<AlertRecord>> GetHistoryAsync(
@@ -54,7 +54,7 @@ public sealed class GetAlertsQueryHandlerTests
     // Arrange
     var repo = new GetAlerts_AlertRepo();
     repo.AddUnacknowledged(MakeAlert());
-    var sut = new GetAlertsQueryHandler(repo);
+    var sut = new GetAlertsQueryHandler(repo, TimeProvider.System);
 
     // Act
     var result = await sut.HandleAsync(new GetAlertsQuery(UnacknowledgedOnly: true));
@@ -69,7 +69,7 @@ public sealed class GetAlertsQueryHandlerTests
     // Arrange — only history records exist, not unacknowledged
     var repo = new GetAlerts_AlertRepo();
     repo.AddHistory(MakeAlert());
-    var sut = new GetAlertsQueryHandler(repo);
+    var sut = new GetAlertsQueryHandler(repo, TimeProvider.System);
 
     // Act
     var result = await sut.HandleAsync(new GetAlertsQuery(UnacknowledgedOnly: true));
@@ -84,7 +84,7 @@ public sealed class GetAlertsQueryHandlerTests
     // Arrange
     var repo = new GetAlerts_AlertRepo();
     repo.AddHistory(MakeAlert("SYS-02"));
-    var sut = new GetAlertsQueryHandler(repo);
+    var sut = new GetAlertsQueryHandler(repo, TimeProvider.System);
     var from = DateTimeOffset.UtcNow.AddDays(-7);
     var to = DateTimeOffset.UtcNow;
 
@@ -100,7 +100,7 @@ public sealed class GetAlertsQueryHandlerTests
   public async Task HandleAsync_NullQuery_ThrowsArgumentNullException()
   {
     // Arrange
-    var sut = new GetAlertsQueryHandler(new GetAlerts_AlertRepo());
+    var sut = new GetAlertsQueryHandler(new GetAlerts_AlertRepo(), TimeProvider.System);
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(() =>

@@ -41,6 +41,7 @@ public sealed class AlertEvaluationService : IAlertEvaluationService
     private readonly IEmailNotificationService _emailService;
     private readonly IRealtimeNotificationService _realtimeNotification;
     private readonly INotificationInboxRepository _inboxRepository;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<AlertEvaluationService> _logger;
 
     public AlertEvaluationService(
@@ -50,6 +51,7 @@ public sealed class AlertEvaluationService : IAlertEvaluationService
         IEmailNotificationService emailService,
         IRealtimeNotificationService realtimeNotification,
         INotificationInboxRepository inboxRepository,
+        TimeProvider timeProvider,
         ILogger<AlertEvaluationService> logger)
     {
         _systemRepository = systemRepository;
@@ -58,6 +60,7 @@ public sealed class AlertEvaluationService : IAlertEvaluationService
         _emailService = emailService;
         _realtimeNotification = realtimeNotification;
         _inboxRepository = inboxRepository;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -204,7 +207,7 @@ public sealed class AlertEvaluationService : IAlertEvaluationService
                       $"(status: {evt.NewStatus}) in system '{system.Name}' " +
                       $"at {evt.OccurredAt:u}. AlertId: {alertId}.",
                 notificationType: Domain.ValueObjects.NotificationType.NotificationDeliveryFailed,
-                sentAt: DateTimeOffset.UtcNow);
+                sentAt: _timeProvider.GetUtcNow());
 
             await _inboxRepository.AddAsync(item, ct);
         }

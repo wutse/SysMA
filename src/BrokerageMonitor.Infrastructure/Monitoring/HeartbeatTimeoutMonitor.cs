@@ -39,14 +39,17 @@ public sealed class HeartbeatTimeoutMonitor : BackgroundService, IHeartbeatTimer
 {
     private readonly ConcurrentDictionary<string, TimerEntry> _timers = new(StringComparer.Ordinal);
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<HeartbeatTimeoutMonitor> _logger;
     private CancellationToken _stoppingToken;
 
     public HeartbeatTimeoutMonitor(
         IServiceScopeFactory scopeFactory,
+        TimeProvider timeProvider,
         ILogger<HeartbeatTimeoutMonitor> logger)
     {
         _scopeFactory = scopeFactory;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -212,7 +215,7 @@ public sealed class HeartbeatTimeoutMonitor : BackgroundService, IHeartbeatTimer
             return;
         }
 
-        var @event = new ComponentLost(entry.ComponentId, entry.SystemId, DateTimeOffset.UtcNow);
+        var @event = new ComponentLost(entry.ComponentId, entry.SystemId, _timeProvider.GetUtcNow());
 
         _logger.LogWarning(
             "Heartbeat timeout for component {ComponentId} (system {SystemId}, type {ComponentType}). Raising ComponentLost.",

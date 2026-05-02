@@ -26,6 +26,7 @@ public sealed class MailChannelProcessor : IMailChannelProcessor
     private readonly IComponentStateRepository _stateRepository;
     private readonly IComponentStateCache _stateCache;
     private readonly IDomainEventDispatcher _eventDispatcher;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<MailChannelProcessor> _logger;
 
     public MailChannelProcessor(
@@ -33,12 +34,14 @@ public sealed class MailChannelProcessor : IMailChannelProcessor
         IComponentStateRepository stateRepository,
         IComponentStateCache stateCache,
         IDomainEventDispatcher eventDispatcher,
+        TimeProvider timeProvider,
         ILogger<MailChannelProcessor> logger)
     {
         _componentRepository = componentRepository;
         _stateRepository = stateRepository;
         _stateCache = stateCache;
         _eventDispatcher = eventDispatcher;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -47,7 +50,7 @@ public sealed class MailChannelProcessor : IMailChannelProcessor
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
 
         // Raise domain event for audit / diagnostics regardless of match outcome.
         await _eventDispatcher.DispatchAsync(

@@ -74,7 +74,7 @@ internal sealed class FakeDashboardAlertRepository : IAlertRecordRepository
     public Task AddAsync(AlertRecord alert, CancellationToken ct = default)
         => Task.CompletedTask;
 
-    public Task AcknowledgeBySystemAsync(string systemId, string operatorName, CancellationToken ct = default)
+    public Task AcknowledgeBySystemAsync(string systemId, string operatorName, DateTimeOffset acknowledgedAt, CancellationToken ct = default)
         => Task.CompletedTask;
 
     public Task<IReadOnlyList<AlertRecord>> GetHistoryAsync(

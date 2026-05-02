@@ -8,22 +8,26 @@ namespace BrokerageMonitor.Application.UseCases.Alerts;
 /// </summary>
 public sealed class GetAlertsQueryHandler
 {
-  private readonly IAlertRecordRepository _alertRepo;
+    private readonly IAlertRecordRepository _alertRepo;
+    private readonly TimeProvider _timeProvider;
 
-  public GetAlertsQueryHandler(IAlertRecordRepository alertRepo)
-      => _alertRepo = alertRepo;
+    public GetAlertsQueryHandler(IAlertRecordRepository alertRepo, TimeProvider timeProvider)
+    {
+        _alertRepo = alertRepo;
+        _timeProvider = timeProvider;
+    }
 
-  public async Task<IReadOnlyList<AlertRecord>> HandleAsync(
-      GetAlertsQuery query,
-      CancellationToken ct = default)
-  {
-    ArgumentNullException.ThrowIfNull(query);
+    public async Task<IReadOnlyList<AlertRecord>> HandleAsync(
+        GetAlertsQuery query,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
 
-    if (query.UnacknowledgedOnly)
-      return await _alertRepo.GetUnacknowledgedAsync(ct).ConfigureAwait(false);
+        if (query.UnacknowledgedOnly)
+            return await _alertRepo.GetUnacknowledgedAsync(ct).ConfigureAwait(false);
 
-    var from = query.From ?? DateTimeOffset.UtcNow.AddDays(-7);
-    var to = query.To ?? DateTimeOffset.UtcNow;
-    return await _alertRepo.GetHistoryAsync(null, from, to, ct).ConfigureAwait(false);
-  }
+        var from = query.From ?? _timeProvider.GetUtcNow().AddDays(-7);
+        var to = query.To ?? _timeProvider.GetUtcNow();
+        return await _alertRepo.GetHistoryAsync(null, from, to, ct).ConfigureAwait(false);
+    }
 }

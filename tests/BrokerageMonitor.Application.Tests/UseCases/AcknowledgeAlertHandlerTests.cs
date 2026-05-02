@@ -45,7 +45,7 @@ internal sealed class AckAlert_AlertRepo : IAlertRecordRepository
     public Task AddAsync(AlertRecord alert, CancellationToken ct = default)
         => Task.CompletedTask;
 
-    public Task AcknowledgeBySystemAsync(string systemId, string operatorName, CancellationToken ct = default)
+    public Task AcknowledgeBySystemAsync(string systemId, string operatorName, DateTimeOffset acknowledgedAt, CancellationToken ct = default)
     {
         AcknowledgeCalls.Add((systemId, operatorName));
         return Task.CompletedTask;
@@ -121,6 +121,7 @@ public sealed class AcknowledgeAlertHandlerTests
             _systemRepo,
             _auditLogger,
             _realtimeService,
+            TimeProvider.System,
             NullLogger<AcknowledgeAlertHandler>.Instance);
 
         _systemRepo.Add(new MonitoredSystem("SYS-1", "Test System", Session, isActive: true));

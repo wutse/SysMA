@@ -60,7 +60,7 @@ public sealed class MonitoredSystemRepositoryTests
         _factory = new TestInMemoryConnectionFactory();
         var initializer = new DatabaseInitializer(_factory, NullLogger<DatabaseInitializer>.Instance);
         await initializer.InitialiseAsync();
-        _repo = new MonitoredSystemRepository(_factory);
+        _repo = new MonitoredSystemRepository(_factory, TimeProvider.System);
     }
 
     [TestCleanup]
@@ -159,8 +159,8 @@ public sealed class MonitoredComponentRepositoryTests
         _factory = new TestInMemoryConnectionFactory();
         var initializer = new DatabaseInitializer(_factory, NullLogger<DatabaseInitializer>.Instance);
         await initializer.InitialiseAsync();
-        _systemRepo = new MonitoredSystemRepository(_factory);
-        _repo = new MonitoredComponentRepository(_factory);
+        _systemRepo = new MonitoredSystemRepository(_factory, TimeProvider.System);
+        _repo = new MonitoredComponentRepository(_factory, TimeProvider.System);
 
         // Seed a parent system for FK constraints
         var session = new MarketSessionWindow(new TimeOnly(9, 0), new TimeOnly(17, 0));
@@ -263,10 +263,10 @@ public sealed class ComponentStateRepositoryTests
         _repo = new ComponentStateRepository(_factory);
 
         // Seed FK dependencies
-        var sysFactory = new MonitoredSystemRepository(_factory);
+        var sysFactory = new MonitoredSystemRepository(_factory, TimeProvider.System);
         var session = new MarketSessionWindow(new TimeOnly(9, 0), new TimeOnly(17, 0));
         await sysFactory.UpsertAsync(new MonitoredSystem("SYS-01", "Sys", session));
-        var compRepo = new MonitoredComponentRepository(_factory);
+        var compRepo = new MonitoredComponentRepository(_factory, TimeProvider.System);
         await compRepo.UpsertAsync(new MonitoredComponent("COMP-01", "SYS-01", "C", ComponentType.Service, "t", 30));
     }
 
@@ -327,7 +327,7 @@ public sealed class ComponentStateRepositoryTests
     public async Task GetByComponentIdsAsync_BatchFetch_ReturnsMatchingStates()
     {
         // Arrange - need extra component
-        var compRepo = new MonitoredComponentRepository(_factory);
+        var compRepo = new MonitoredComponentRepository(_factory, TimeProvider.System);
         await compRepo.UpsertAsync(new MonitoredComponent("COMP-02", "SYS-01", "D", ComponentType.Service, "t2", 30));
 
         await _repo.UpsertAsync(new ComponentState("COMP-01", ComponentStatus.Running));
@@ -385,7 +385,7 @@ public sealed class AlertRecordRepositoryTests
         await _repo.AddAsync(new AlertRecord(Guid.NewGuid(), "SYS-01", "COMP-01", ComponentStatus.Lost, DateTimeOffset.UtcNow));
 
         // Act
-        await _repo.AcknowledgeBySystemAsync("SYS-01", "operator");
+        await _repo.AcknowledgeBySystemAsync("SYS-01", "operator", DateTimeOffset.UtcNow);
         var unacked = await _repo.GetUnacknowledgedAsync();
         var hasFlag = await _repo.HasUnacknowledgedAlertAsync("SYS-01");
 
@@ -432,12 +432,12 @@ public sealed class DailyExecutionRepositoryTests
         _repo = new DailyExecutionRepository(_factory);
 
         // Seed FK dependencies
-        var sysRepo = new MonitoredSystemRepository(_factory);
+        var sysRepo = new MonitoredSystemRepository(_factory, TimeProvider.System);
         var session = new MarketSessionWindow(new TimeOnly(9, 0), new TimeOnly(17, 0));
         await sysRepo.UpsertAsync(new MonitoredSystem("SYS-01", "Sys", session));
 
         var defRepo = new HealthMonitorDefinitionRepository(_factory);
-        var compRepo = new MonitoredComponentRepository(_factory);
+        var compRepo = new MonitoredComponentRepository(_factory, TimeProvider.System);
         await compRepo.UpsertAsync(new MonitoredComponent("COMP-01", "SYS-01", "Service A",
             ComponentType.Service, "tcp://localhost:5555", 60));
         var def = new HealthMonitorDefinition(
@@ -828,11 +828,11 @@ public sealed class HealthMonitorDefinitionRepositoryTests
         _repo = new HealthMonitorDefinitionRepository(_factory);
 
         // Seed FK dependencies: system and component must exist before definitions
-        var sysRepo = new MonitoredSystemRepository(_factory);
+        var sysRepo = new MonitoredSystemRepository(_factory, TimeProvider.System);
         var session = new MarketSessionWindow(new TimeOnly(9, 0), new TimeOnly(17, 0));
         await sysRepo.UpsertAsync(new MonitoredSystem("SYS-01", "Test System", session));
 
-        var compRepo = new MonitoredComponentRepository(_factory);
+        var compRepo = new MonitoredComponentRepository(_factory, TimeProvider.System);
         await compRepo.UpsertAsync(new MonitoredComponent(
             "COMP-01", "SYS-01", "Service A", ComponentType.Service, "topic.a", 30));
         await compRepo.UpsertAsync(new MonitoredComponent(
@@ -1009,8 +1009,8 @@ public sealed class HealthMonitorDefinitionRepositoryTests
     public async Task GetBySystemIdAsync_ReturnsOnlyDefinitionsForSystem()
     {
         // Arrange — seed a second system with its own component and definition
-        var sysRepo = new MonitoredSystemRepository(_factory);
-        var compRepo = new MonitoredComponentRepository(_factory);
+        var sysRepo = new MonitoredSystemRepository(_factory, TimeProvider.System);
+        var compRepo = new MonitoredComponentRepository(_factory, TimeProvider.System);
         var session = new MarketSessionWindow(new TimeOnly(9, 0), new TimeOnly(17, 0));
         await sysRepo.UpsertAsync(new MonitoredSystem("SYS-02", "Other", session));
         await compRepo.UpsertAsync(new MonitoredComponent(

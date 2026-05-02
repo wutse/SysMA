@@ -68,7 +68,7 @@ public sealed class AlertRecordRepository : IAlertRecordRepository
         }, cancellationToken: ct));
     }
 
-    public async Task AcknowledgeBySystemAsync(string systemId, string operatorName, CancellationToken ct = default)
+    public async Task AcknowledgeBySystemAsync(string systemId, string operatorName, DateTimeOffset acknowledgedAt, CancellationToken ct = default)
     {
         using var conn = _factory.CreateConnection();
         const string sql = """
@@ -82,7 +82,7 @@ public sealed class AlertRecordRepository : IAlertRecordRepository
         await conn.ExecuteAsync(new CommandDefinition(sql, new
         {
             OperatorName = operatorName,
-            Now          = DateTimeOffset.UtcNow.ToString("O"),
+            Now          = acknowledgedAt.ToString("O"),
             SystemId     = systemId
         }, cancellationToken: ct));
     }

@@ -19,8 +19,10 @@ public interface IAlertRecordRepository
     /// Bulk-acknowledges all active alerts for the given system.
     /// Implementations MUST filter with <c>WHERE AcknowledgedAt IS NULL</c> so that
     /// already-acknowledged records are never mutated.
+    /// The <paramref name="acknowledgedAt"/> timestamp is supplied by the caller so that the
+    /// Application layer's <see cref="TimeProvider"/> drives all time values.
     /// </summary>
-    Task AcknowledgeBySystemAsync(string systemId, string operatorName, CancellationToken ct = default);
+    Task AcknowledgeBySystemAsync(string systemId, string operatorName, DateTimeOffset acknowledgedAt, CancellationToken ct = default);
     Task<IReadOnlyList<AlertRecord>> GetHistoryAsync(
         string? systemId, DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default);
 }

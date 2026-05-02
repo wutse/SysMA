@@ -68,6 +68,7 @@ public sealed class MailChannelProcessorTests
             stateRepo,
             stateCache,
             dispatcher,
+            TimeProvider.System,
             NullLogger<MailChannelProcessor>.Instance);
 
     // -----------------------------------------------------------------------

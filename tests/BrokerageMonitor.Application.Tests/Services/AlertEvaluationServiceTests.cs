@@ -59,7 +59,7 @@ internal sealed class AlertEval_AlertRepo : IAlertRecordRepository
         return Task.CompletedTask;
     }
 
-    public Task AcknowledgeBySystemAsync(string systemId, string operatorName, CancellationToken ct = default)
+    public Task AcknowledgeBySystemAsync(string systemId, string operatorName, DateTimeOffset acknowledgedAt, CancellationToken ct = default)
         => Task.CompletedTask;
 
     public Task<IReadOnlyList<AlertRecord>> GetHistoryAsync(
@@ -203,6 +203,7 @@ public sealed class AlertEvaluationServiceTests
             _emailService,
             _realtimeService,
             _inboxRepo,
+            TimeProvider.System,
             NullLogger<AlertEvaluationService>.Instance);
     }
 

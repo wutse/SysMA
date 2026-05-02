@@ -77,7 +77,7 @@ public sealed class HeartbeatTimeoutMonitorTests
                 .BuildServiceProvider()
                 .GetRequiredService<IServiceScopeFactory>();
 
-        return new HeartbeatTimeoutMonitor(scopeFactory, NullLogger<HeartbeatTimeoutMonitor>.Instance);
+        return new HeartbeatTimeoutMonitor(scopeFactory, TimeProvider.System, NullLogger<HeartbeatTimeoutMonitor>.Instance);
     }
 
     [TestMethod]

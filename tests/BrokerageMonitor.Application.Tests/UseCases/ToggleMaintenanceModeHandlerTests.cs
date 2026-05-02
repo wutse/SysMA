@@ -185,6 +185,7 @@ public sealed class ToggleMaintenanceModeHandlerTests
             _stateCache,
             _auditLogger,
             _realtimeService,
+            TimeProvider.System,
             NullLogger<ToggleMaintenanceModeHandler>.Instance);
 
         _systemRepo.Add(ToggleMaint_Builder.System());

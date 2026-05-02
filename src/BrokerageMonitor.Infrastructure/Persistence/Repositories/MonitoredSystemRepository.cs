@@ -9,8 +9,13 @@ namespace BrokerageMonitor.Infrastructure.Persistence.Repositories;
 public sealed class MonitoredSystemRepository : IMonitoredSystemRepository
 {
     private readonly IDbConnectionFactory _factory;
+    private readonly TimeProvider _timeProvider;
 
-    public MonitoredSystemRepository(IDbConnectionFactory factory) => _factory = factory;
+    public MonitoredSystemRepository(IDbConnectionFactory factory, TimeProvider timeProvider)
+    {
+        _factory = factory;
+        _timeProvider = timeProvider;
+    }
 
     public async Task<MonitoredSystem?> GetByIdAsync(string systemId, CancellationToken ct = default)
     {
@@ -61,7 +66,7 @@ public sealed class MonitoredSystemRepository : IMonitoredSystemRepository
             IsMaintenanceActive = system.IsMaintenanceActive ? 1 : 0,
             system.MaintenanceOperator,
             IsActive = system.IsActive ? 1 : 0,
-            Now = DateTimeOffset.UtcNow.ToString("O")
+            Now = _timeProvider.GetUtcNow().ToString("O")
         }, cancellationToken: ct));
     }
 

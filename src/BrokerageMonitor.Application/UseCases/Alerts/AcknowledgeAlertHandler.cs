@@ -25,6 +25,7 @@ public sealed class AcknowledgeAlertHandler
     private readonly IMonitoredSystemRepository _systemRepository;
     private readonly IAuditLogger _auditLogger;
     private readonly IRealtimeNotificationService _realtimeNotification;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<AcknowledgeAlertHandler> _logger;
 
     public AcknowledgeAlertHandler(
@@ -32,12 +33,14 @@ public sealed class AcknowledgeAlertHandler
         IMonitoredSystemRepository systemRepository,
         IAuditLogger auditLogger,
         IRealtimeNotificationService realtimeNotification,
+        TimeProvider timeProvider,
         ILogger<AcknowledgeAlertHandler> logger)
     {
         _alertRepository = alertRepository;
         _systemRepository = systemRepository;
         _auditLogger = auditLogger;
         _realtimeNotification = realtimeNotification;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -67,10 +70,10 @@ public sealed class AcknowledgeAlertHandler
             return;
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
 
         // Clear the system-wide GlobalFlag for all unacknowledged alerts (FR-019)
-        await _alertRepository.AcknowledgeBySystemAsync(command.SystemId, command.OperatorName, ct);
+        await _alertRepository.AcknowledgeBySystemAsync(command.SystemId, command.OperatorName, now, ct);
 
         _logger.LogInformation(
             "Alert acknowledged: System={SystemId}, Operator={OperatorName}",

@@ -32,6 +32,7 @@ public sealed class ToggleMaintenanceModeHandler
     private readonly IComponentStateCache _stateCache;
     private readonly IAuditLogger _auditLogger;
     private readonly IRealtimeNotificationService _realtimeNotification;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<ToggleMaintenanceModeHandler> _logger;
 
     public ToggleMaintenanceModeHandler(
@@ -41,6 +42,7 @@ public sealed class ToggleMaintenanceModeHandler
         IComponentStateCache stateCache,
         IAuditLogger auditLogger,
         IRealtimeNotificationService realtimeNotification,
+        TimeProvider timeProvider,
         ILogger<ToggleMaintenanceModeHandler> logger)
     {
         _systemRepository = systemRepository;
@@ -49,6 +51,7 @@ public sealed class ToggleMaintenanceModeHandler
         _stateCache = stateCache;
         _auditLogger = auditLogger;
         _realtimeNotification = realtimeNotification;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -76,7 +79,7 @@ public sealed class ToggleMaintenanceModeHandler
             return;
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         var targetStatus = command.Activate
             ? ComponentStatus.Maintenance
             : ComponentStatus.Unknown;

@@ -9,8 +9,13 @@ namespace BrokerageMonitor.Infrastructure.Persistence.Repositories;
 public sealed class MonitoredComponentRepository : IMonitoredComponentRepository
 {
     private readonly IDbConnectionFactory _factory;
+    private readonly TimeProvider _timeProvider;
 
-    public MonitoredComponentRepository(IDbConnectionFactory factory) => _factory = factory;
+    public MonitoredComponentRepository(IDbConnectionFactory factory, TimeProvider timeProvider)
+    {
+        _factory = factory;
+        _timeProvider = timeProvider;
+    }
 
     public async Task<MonitoredComponent?> GetByIdAsync(string componentId, CancellationToken ct = default)
     {
@@ -75,7 +80,7 @@ public sealed class MonitoredComponentRepository : IMonitoredComponentRepository
             component.HeartbeatTimeoutSeconds,
             component.CronExpression,
             IsActive                = component.IsActive ? 1 : 0,
-            Now                     = DateTimeOffset.UtcNow.ToString("O"),
+            Now                     = _timeProvider.GetUtcNow().ToString("O"),
             MailFromPattern         = component.MailParsingRule?.FromPattern,
             MailSubjectPattern      = component.MailParsingRule?.SubjectPattern,
             MailSuccessKeywords     = component.MailParsingRule is null
