@@ -57,14 +57,14 @@ public sealed class AlertRecordRepository : IAlertRecordRepository
 
         await conn.ExecuteAsync(new CommandDefinition(sql, new
         {
-            AlertId            = alert.AlertId.ToString(),
+            AlertId = alert.AlertId.ToString(),
             alert.SystemId,
             alert.ComponentId,
-            AlertStatus        = alert.AlertStatus.ToString(),
-            OccurredAt         = alert.OccurredAt.ToString("O"),
+            AlertStatus = alert.AlertStatus.ToString(),
+            OccurredAt = alert.OccurredAt.ToString("O"),
             IsGlobalFlagActive = alert.IsGlobalFlagActive ? 1 : 0,
             alert.AcknowledgedBy,
-            AcknowledgedAt     = alert.AcknowledgedAt?.ToString("O")
+            AcknowledgedAt = alert.AcknowledgedAt?.ToString("O")
         }, cancellationToken: ct));
     }
 
@@ -82,8 +82,8 @@ public sealed class AlertRecordRepository : IAlertRecordRepository
         await conn.ExecuteAsync(new CommandDefinition(sql, new
         {
             OperatorName = operatorName,
-            Now          = acknowledgedAt.ToString("O"),
-            SystemId     = systemId
+            Now = acknowledgedAt.ToString("O"),
+            SystemId = systemId
         }, cancellationToken: ct));
     }
 
@@ -102,8 +102,8 @@ public sealed class AlertRecordRepository : IAlertRecordRepository
         var rows = await conn.QueryAsync<AlertRecordRow>(new CommandDefinition(sql, new
         {
             SystemId = systemId,
-            From     = from.ToString("O"),
-            To       = to.ToString("O")
+            From = from.ToString("O"),
+            To = to.ToString("O")
         }, cancellationToken: ct));
 
         return rows.Select(MapToDomain).ToList();
@@ -126,12 +126,12 @@ public sealed class AlertRecordRepository : IAlertRecordRepository
     }
 
     private sealed record AlertRecordRow(
-        string  AlertId,
-        string  SystemId,
-        string  ComponentId,
-        string  AlertStatus,
-        string  OccurredAt,
-        long    IsGlobalFlagActive,
+        string AlertId,
+        string SystemId,
+        string ComponentId,
+        string AlertStatus,
+        string OccurredAt,
+        long IsGlobalFlagActive,
         string? AcknowledgedBy,
         string? AcknowledgedAt);
 }

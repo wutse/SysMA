@@ -75,18 +75,18 @@ public sealed class MonitoredComponentRepository : IMonitoredComponentRepository
             component.ComponentId,
             component.SystemId,
             component.Name,
-            ComponentType           = component.ComponentType.ToString(),
+            ComponentType = component.ComponentType.ToString(),
             component.ZeroMQTopic,
             component.HeartbeatTimeoutSeconds,
             component.CronExpression,
-            IsActive                = component.IsActive ? 1 : 0,
-            Now                     = _timeProvider.GetUtcNow().ToString("O"),
-            MailFromPattern         = component.MailParsingRule?.FromPattern,
-            MailSubjectPattern      = component.MailParsingRule?.SubjectPattern,
-            MailSuccessKeywords     = component.MailParsingRule is null
+            IsActive = component.IsActive ? 1 : 0,
+            Now = _timeProvider.GetUtcNow().ToString("O"),
+            MailFromPattern = component.MailParsingRule?.FromPattern,
+            MailSubjectPattern = component.MailParsingRule?.SubjectPattern,
+            MailSuccessKeywords = component.MailParsingRule is null
                 ? null
                 : JsonSerializer.Serialize(component.MailParsingRule.SuccessKeywords),
-            MailFailureKeywords     = component.MailParsingRule is null
+            MailFailureKeywords = component.MailParsingRule is null
                 ? null
                 : JsonSerializer.Serialize(component.MailParsingRule.FailureKeywords)
         }, cancellationToken: ct));
@@ -115,16 +115,16 @@ public sealed class MonitoredComponentRepository : IMonitoredComponentRepository
     }
 
     private sealed record MonitoredComponentRow(
-        string  ComponentId,
-        string  SystemId,
-        string  Name,
-        string  ComponentType,
-        string  ZeroMQTopic,
-        long    HeartbeatTimeoutSeconds,
+        string ComponentId,
+        string SystemId,
+        string Name,
+        string ComponentType,
+        string ZeroMQTopic,
+        long HeartbeatTimeoutSeconds,
         string? CronExpression,
-        long    IsActive,
-        string  CreatedAt,
-        string  UpdatedAt,
+        long IsActive,
+        string CreatedAt,
+        string UpdatedAt,
         string? MailFromPattern,
         string? MailSubjectPattern,
         string? MailSuccessKeywords,
