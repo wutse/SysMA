@@ -6,6 +6,7 @@ using BrokerageMonitor.Infrastructure.Persistence;
 using BrokerageMonitor.Infrastructure.Scheduling;
 using BrokerageMonitor.Web.Components;
 using BrokerageMonitor.Web.Services;
+using Microsoft.Extensions.Options;
 using NLog;
 using NLog.Web;
 using Quartz;
@@ -57,9 +58,10 @@ try
     builder.Services.AddRazorComponents()
         .AddInteractiveServerComponents();
 
-    // Bind Scheduler cron settings from appsettings.json
+    // Bind Scheduler cron settings from appsettings.json and validate at startup
     builder.Services.Configure<SchedulerOptions>(
         builder.Configuration.GetSection(SchedulerOptions.SectionName));
+    builder.Services.AddSingleton<IValidateOptions<SchedulerOptions>, SchedulerOptionsValidator>();
 
     var app = builder.Build();
 
