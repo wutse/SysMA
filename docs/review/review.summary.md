@@ -8,13 +8,13 @@
 
 ## Health Scores
 
-| Project            | Last Review | Score    | Open Items | Key Remaining Risk                                                                 |
-| ------------------ | ----------- | -------- | ---------- | ---------------------------------------------------------------------------------- |
-| **Domain**         | 2026-05-03c | 9.5 / 10 | 2          | `MarketSessionWindow` UTC advisory; `DateTimeOffset.UtcNow` fallback in 2 ctors   |
-| **Application**    | 2026-05-03c | 9.5 / 10 | 1          | `GetAlertsQueryHandler` 2-space indentation (formatter artifact)                   |
-| **Infrastructure** | 2026-05-03c | 9.8 / 10 | 0          | No open items                                                                      |
-| **MailAgent**      | 2026-05-03  | 9.0 / 10 | 2          | STA bridge blocking call; `PollAndPublishAsync` suffix (advisory)                  |
-| **Web**            | 2026-05-03  | 9.5 / 10 | 2          | Indent style in `SchedulerOptionsValidator`; bunit advisory                        |
+| Project            | Last Review | Score    | Open Items | Key Remaining Risk                                                              |
+| ------------------ | ----------- | -------- | ---------- | ------------------------------------------------------------------------------- |
+| **Domain**         | 2026-05-03c | 9.5 / 10 | 2          | `MarketSessionWindow` UTC advisory; `DateTimeOffset.UtcNow` fallback in 2 ctors |
+| **Application**    | 2026-05-03c | 9.5 / 10 | 1          | `GetAlertsQueryHandler` 2-space indentation (formatter artifact)                |
+| **Infrastructure** | 2026-05-03c | 9.8 / 10 | 0          | No open items                                                                   |
+| **MailAgent**      | 2026-05-03  | 9.0 / 10 | 2          | STA bridge blocking call; `PollAndPublishAsync` suffix (advisory)               |
+| **Web**            | 2026-05-03  | 9.5 / 10 | 2          | Indent style in `SchedulerOptionsValidator`; bunit advisory                     |
 
 ---
 

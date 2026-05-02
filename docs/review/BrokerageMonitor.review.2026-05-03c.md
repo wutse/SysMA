@@ -10,14 +10,14 @@
 
 ## 📊 Architecture Health Score
 
-| Project                             | Score    | Δ         | Notes                                          |
-| ----------------------------------- | -------- | --------- | ---------------------------------------------- |
-| **BrokerageMonitor.Domain**         | 9.5 / 10 | ↓ 0.2     | N2 advisory added (domain fallback UtcNow)     |
-| **BrokerageMonitor.Application**    | 9.5 / 10 | ↑ 0.5     | C3–C8 all resolved; only N1 style gap remains  |
-| **BrokerageMonitor.Infrastructure** | 9.8 / 10 | ↑ 0.8     | I3–I6 all resolved; no new violations found    |
-| **BrokerageMonitor.Web**            | 9.5 / 10 | —         | No change; W1 style + A8 bunit advisory remain |
-| **BrokerageMonitor.MailAgent**      | 9.0 / 10 | —         | Not re-reviewed this session                   |
-| **Overall Solution**                | 9.5 / 10 | ↑ 0.3     |                                                |
+| Project                             | Score    | Δ     | Notes                                          |
+| ----------------------------------- | -------- | ----- | ---------------------------------------------- |
+| **BrokerageMonitor.Domain**         | 9.5 / 10 | ↓ 0.2 | N2 advisory added (domain fallback UtcNow)     |
+| **BrokerageMonitor.Application**    | 9.5 / 10 | ↑ 0.5 | C3–C8 all resolved; only N1 style gap remains  |
+| **BrokerageMonitor.Infrastructure** | 9.8 / 10 | ↑ 0.8 | I3–I6 all resolved; no new violations found    |
+| **BrokerageMonitor.Web**            | 9.5 / 10 | —     | No change; W1 style + A8 bunit advisory remain |
+| **BrokerageMonitor.MailAgent**      | 9.0 / 10 | —     | Not re-reviewed this session                   |
+| **Overall Solution**                | 9.5 / 10 | ↑ 0.3 |                                                |
 
 ---
 
@@ -29,18 +29,18 @@ All five projects respect the dependency rule. Application references only Domai
 ### 2. TimeProvider Pattern — Comprehensively Applied (C3–C8 / I3–I6 Resolved)
 The `TimeProvider` pattern is now consistent across all Application handlers and Infrastructure repositories:
 
-| Class | Before | After |
-|---|---|---|
-| `OverrideComponentStateHandler` | `DateTimeOffset.UtcNow` | `_timeProvider.GetUtcNow()` |
-| `AcknowledgeAlertHandler` | `DateTimeOffset.UtcNow` | `_timeProvider.GetUtcNow()` |
-| `GetAlertsQueryHandler` | `DateTimeOffset.UtcNow` (×2) | `_timeProvider.GetUtcNow()` |
-| `ToggleMaintenanceModeHandler` | `DateTimeOffset.UtcNow` | `_timeProvider.GetUtcNow()` |
-| `MailChannelProcessor` | `DateTimeOffset.UtcNow` | `_timeProvider.GetUtcNow()` |
-| `AlertEvaluationService` | `DateTimeOffset.UtcNow` | `_timeProvider.GetUtcNow()` |
-| `HeartbeatTimeoutMonitor` | `DateTimeOffset.UtcNow` | `_timeProvider.GetUtcNow()` |
-| `AlertRecordRepository` | `DateTimeOffset.UtcNow` | Caller-supplied `acknowledgedAt` |
-| `MonitoredComponentRepository` | `DateTimeOffset.UtcNow` | `_timeProvider.GetUtcNow()` |
-| `MonitoredSystemRepository` | `DateTimeOffset.UtcNow` | `_timeProvider.GetUtcNow()` |
+| Class                           | Before                       | After                            |
+| ------------------------------- | ---------------------------- | -------------------------------- |
+| `OverrideComponentStateHandler` | `DateTimeOffset.UtcNow`      | `_timeProvider.GetUtcNow()`      |
+| `AcknowledgeAlertHandler`       | `DateTimeOffset.UtcNow`      | `_timeProvider.GetUtcNow()`      |
+| `GetAlertsQueryHandler`         | `DateTimeOffset.UtcNow` (×2) | `_timeProvider.GetUtcNow()`      |
+| `ToggleMaintenanceModeHandler`  | `DateTimeOffset.UtcNow`      | `_timeProvider.GetUtcNow()`      |
+| `MailChannelProcessor`          | `DateTimeOffset.UtcNow`      | `_timeProvider.GetUtcNow()`      |
+| `AlertEvaluationService`        | `DateTimeOffset.UtcNow`      | `_timeProvider.GetUtcNow()`      |
+| `HeartbeatTimeoutMonitor`       | `DateTimeOffset.UtcNow`      | `_timeProvider.GetUtcNow()`      |
+| `AlertRecordRepository`         | `DateTimeOffset.UtcNow`      | Caller-supplied `acknowledgedAt` |
+| `MonitoredComponentRepository`  | `DateTimeOffset.UtcNow`      | `_timeProvider.GetUtcNow()`      |
+| `MonitoredSystemRepository`     | `DateTimeOffset.UtcNow`      | `_timeProvider.GetUtcNow()`      |
 
 `TimeProvider.System` is registered as a singleton in `ApplicationServiceCollectionExtensions`. All 608 unit tests pass with this pattern in place.
 
