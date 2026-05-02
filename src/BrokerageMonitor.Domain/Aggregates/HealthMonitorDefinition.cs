@@ -26,11 +26,13 @@ public sealed class HealthMonitorDefinition
     public string? TeamsWebhookUrl { get; private set; }
 
     /// <summary>
-    /// Controls whether Email/Teams notifications are sent (FR-014).
-    /// Applies to both Success and Failed executions — <c>false</c> disables all external notifications.
+    /// Controls whether Email/Teams failure notifications are sent (FR-014).
+    /// <c>true</c> → send failure notification on Failed execution;
+    /// <c>false</c> → suppress failure notification only.
+    /// Success notifications (FR-013) are always sent regardless of this flag.
     /// Inbox writing always occurs regardless of this setting (FR-020).
     /// </summary>
-    public bool NotificationsEnabled { get; private set; }
+    public bool SendOnFailure { get; private set; }
 
     public bool IsActive { get; private set; }
 
@@ -51,7 +53,7 @@ public sealed class HealthMonitorDefinition
         IEnumerable<WatchedComponent> watchedComponents,
         IEnumerable<EmailAddress>? emailRecipients = null,
         string? teamsWebhookUrl = null,
-        bool notificationsEnabled = true,
+        bool sendOnFailure = true,
         bool isActive = true)
     {
         if (definitionId == Guid.Empty)
@@ -75,7 +77,7 @@ public sealed class HealthMonitorDefinition
         Name = name;
         DeadlineTime = deadlineTime;
         Schedule = schedule;
-        NotificationsEnabled = notificationsEnabled;
+        SendOnFailure = sendOnFailure;
         TeamsWebhookUrl = teamsWebhookUrl;
         IsActive = isActive;
 
@@ -125,7 +127,7 @@ public sealed class HealthMonitorDefinition
 
     public void SetTeamsWebhookUrl(string? url) => TeamsWebhookUrl = url;
 
-    public void SetNotificationsEnabled(bool notificationsEnabled) => NotificationsEnabled = notificationsEnabled;
+    public void SetSendOnFailure(bool sendOnFailure) => SendOnFailure = sendOnFailure;
 
     public void Deactivate() => IsActive = false;
 

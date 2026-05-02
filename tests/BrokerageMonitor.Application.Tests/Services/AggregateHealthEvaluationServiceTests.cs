@@ -265,7 +265,7 @@ public sealed class AggregateHealthEvaluationServiceTests
         Guid? definitionId = null,
         string systemId = "SYS",
         IEnumerable<WatchedComponent>? watchedComponents = null,
-        bool notificationsEnabled = true,
+        bool sendOnFailure = true,
         IEnumerable<EmailAddress>? emailRecipients = null,
         string? teamsWebhookUrl = null)
     {
@@ -278,7 +278,7 @@ public sealed class AggregateHealthEvaluationServiceTests
             watchedComponents: watchedComponents ?? [new WatchedComponent("COMP-001", ComponentType.ScheduledJob)],
             emailRecipients: emailRecipients,
             teamsWebhookUrl: teamsWebhookUrl,
-            notificationsEnabled: notificationsEnabled);
+            sendOnFailure: sendOnFailure);
     }
 
     private static DailyExecution MakeInProgressExecution(Guid definitionId, string systemId = "SYS")
@@ -474,7 +474,7 @@ public sealed class AggregateHealthEvaluationServiceTests
         const string componentId = "COMP-001";
         var def = MakeDefinition(
             watchedComponents: [new WatchedComponent(componentId, ComponentType.ScheduledJob)],
-            notificationsEnabled: false); // don't require failure-only sends to test
+            sendOnFailure: false); // don't require failure-only sends to test
         definitions.Add(def);
         systems.Add(MakeSystem(def.SystemId));
 
@@ -504,7 +504,7 @@ public sealed class AggregateHealthEvaluationServiceTests
         const string componentId = "COMP-001";
         var def = MakeDefinition(
             watchedComponents: [new WatchedComponent(componentId, ComponentType.ScheduledJob)],
-            notificationsEnabled: false);
+            sendOnFailure: false);
         definitions.Add(def);
         systems.Add(MakeSystem(def.SystemId));
 
@@ -597,7 +597,7 @@ public sealed class AggregateHealthEvaluationServiceTests
         const string componentId = "SVC-001";
         var def = MakeDefinition(
             watchedComponents: [new WatchedComponent(componentId, ComponentType.Service)],
-            notificationsEnabled: false);
+            sendOnFailure: false);
         definitions.Add(def);
         systems.Add(MakeSystem(def.SystemId));
 
@@ -627,7 +627,7 @@ public sealed class AggregateHealthEvaluationServiceTests
         const string componentId = "SVC-001";
         var def = MakeDefinition(
             watchedComponents: [new WatchedComponent(componentId, ComponentType.Service)],
-            notificationsEnabled: false);
+            sendOnFailure: false);
         definitions.Add(def);
         systems.Add(MakeSystem(def.SystemId));
 
@@ -649,14 +649,14 @@ public sealed class AggregateHealthEvaluationServiceTests
     }
 
     [TestMethod]
-    public async Task EvaluateDefinitionAsync_NotificationsEnabled_True_FailedExecution_SendsEmail()
+    public async Task EvaluateDefinitionAsync_SendOnFailure_True_FailedExecution_SendsEmail()
     {
         // Arrange
         var (sut, definitions, executions, systems, componentStates, _, email, _, _, _) = BuildSut();
         const string componentId = "COMP-001";
         var def = MakeDefinition(
             watchedComponents: [new WatchedComponent(componentId, ComponentType.ScheduledJob)],
-            notificationsEnabled: true,
+            sendOnFailure: true,
             emailRecipients: [new EmailAddress("ops@example.com")]);
         definitions.Add(def);
         systems.Add(MakeSystem(def.SystemId));
@@ -676,14 +676,14 @@ public sealed class AggregateHealthEvaluationServiceTests
     }
 
     [TestMethod]
-    public async Task EvaluateDefinitionAsync_NotificationsEnabled_True_SuccessExecution_SendsEmail()
+    public async Task EvaluateDefinitionAsync_SendOnFailure_True_SuccessExecution_SendsEmail()
     {
         // Arrange
         var (sut, definitions, executions, systems, componentStates, _, email, _, _, _) = BuildSut();
         const string componentId = "COMP-001";
         var def = MakeDefinition(
             watchedComponents: [new WatchedComponent(componentId, ComponentType.ScheduledJob)],
-            notificationsEnabled: true,
+            sendOnFailure: true,
             emailRecipients: [new EmailAddress("ops@example.com")]);
         definitions.Add(def);
         systems.Add(MakeSystem(def.SystemId));
@@ -703,14 +703,14 @@ public sealed class AggregateHealthEvaluationServiceTests
     }
 
     [TestMethod]
-    public async Task EvaluateDefinitionAsync_NotificationsEnabled_False_SuccessExecution_DoesNotSendEmail()
+    public async Task EvaluateDefinitionAsync_FR013_SendOnFailure_False_SuccessExecution_AlwaysSendsEmail()
     {
         // Arrange
         var (sut, definitions, executions, systems, componentStates, _, email, _, _, _) = BuildSut();
         const string componentId = "COMP-001";
         var def = MakeDefinition(
             watchedComponents: [new WatchedComponent(componentId, ComponentType.ScheduledJob)],
-            notificationsEnabled: false,                                   // ← opt-out
+            sendOnFailure: false,                                   // ← failure-only opt-out
             emailRecipients: [new EmailAddress("ops@example.com")]);
         definitions.Add(def);
         systems.Add(MakeSystem(def.SystemId));
@@ -725,19 +725,19 @@ public sealed class AggregateHealthEvaluationServiceTests
         // Act
         await sut.EvaluateDefinitionAsync(def.DefinitionId);
 
-        // Assert — NotificationsEnabled = false means no notifications at all
-        Assert.AreEqual(0, email.SendHealthSummaryCallCount);
+        // Assert — FR-013: success notification ALWAYS sent, regardless of SendOnFailure
+        Assert.AreEqual(1, email.SendHealthSummaryCallCount);
     }
 
     [TestMethod]
-    public async Task EvaluateDefinitionAsync_NotificationsEnabled_False_FailedExecution_DoesNotSendEmail()
+    public async Task EvaluateDefinitionAsync_SendOnFailure_False_FailedExecution_DoesNotSendEmail()
     {
         // Arrange
         var (sut, definitions, executions, systems, componentStates, _, email, _, _, _) = BuildSut();
         const string componentId = "COMP-001";
         var def = MakeDefinition(
             watchedComponents: [new WatchedComponent(componentId, ComponentType.ScheduledJob)],
-            notificationsEnabled: false,
+            sendOnFailure: false,
             emailRecipients: [new EmailAddress("ops@example.com")]);
         definitions.Add(def);
         systems.Add(MakeSystem(def.SystemId));
@@ -752,7 +752,7 @@ public sealed class AggregateHealthEvaluationServiceTests
         // Act
         await sut.EvaluateDefinitionAsync(def.DefinitionId);
 
-        // Assert
+        // Assert — FR-014: SendOnFailure=false suppresses failure notification only
         Assert.AreEqual(0, email.SendHealthSummaryCallCount);
     }
 
@@ -790,7 +790,7 @@ public sealed class AggregateHealthEvaluationServiceTests
         const string componentId = "COMP-001";
         var def = MakeDefinition(
             watchedComponents: [new WatchedComponent(componentId, ComponentType.ScheduledJob)],
-            notificationsEnabled: true,
+            sendOnFailure: true,
             emailRecipients: [new EmailAddress("ops@example.com")]);
         definitions.Add(def);
         systems.Add(MakeSystem(def.SystemId));

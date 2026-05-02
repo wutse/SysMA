@@ -168,9 +168,9 @@ else
                     </div>
                     <div class="col-12">
                         <div class="form-check">
-                            <InputCheckbox class="form-check-input" @bind-Value="_model.NotificationsEnabled" id="notificationsEnabled" />
-                            <label class="form-check-label" for="notificationsEnabled">
-                                啟用通知 (NotificationsEnabled)
+                            <InputCheckbox class="form-check-input" @bind-Value="_model.SendOnFailure" id="sendOnFailure" />
+                            <label class="form-check-label" for="sendOnFailure">
+                                失敗時發送通知 (SendOnFailure)
                             </label>
                         </div>
                     </div>
@@ -244,7 +244,7 @@ else
         _model.ScheduleDayOfWeek = def.ScheduleDayOfWeek;
         _model.EmailRecipientsRaw = string.Join(", ", def.EmailRecipients);
         _model.TeamsWebhookUrl = def.TeamsWebhookUrl;
-        _model.NotificationsEnabled = def.NotificationsEnabled;
+        _model.SendOnFailure = def.SendOnFailure;
 
         _selectedComponentIds = def.WatchedComponents
             .Select(w => w.ComponentId)
@@ -302,7 +302,7 @@ else
                 WatchedComponents: watchedComponents,
                 EmailRecipients: emailRecipients,
                 TeamsWebhookUrl: string.IsNullOrWhiteSpace(_model.TeamsWebhookUrl) ? null : _model.TeamsWebhookUrl,
-                NotificationsEnabled: _model.NotificationsEnabled);
+                SendOnFailure: _model.SendOnFailure);
 
             await UpsertHandler.HandleAsync(command);
             Nav.NavigateTo("/health");
@@ -352,7 +352,7 @@ else
 
         public string? EmailRecipientsRaw { get; set; }
         public string? TeamsWebhookUrl { get; set; }
-        public bool NotificationsEnabled { get; set; } = true;
+        public bool SendOnFailure { get; set; } = true;
     }
 
     private sealed record ComponentSummary(

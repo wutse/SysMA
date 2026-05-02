@@ -80,10 +80,10 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
             const string mainSql = """
                 INSERT INTO HealthMonitorDefinitions
                     (DefinitionId, SystemId, Name, DeadlineTime, ScheduleType,
-                     CronExpression, DayOfWeek, EmailRecipients, TeamsWebhookUrl, NotificationsEnabled, IsActive)
+                     CronExpression, DayOfWeek, EmailRecipients, TeamsWebhookUrl, SendOnFailure, IsActive)
                 VALUES
                     (@DefinitionId, @SystemId, @Name, @DeadlineTime, @ScheduleType,
-                     @CronExpression, @DayOfWeek, @EmailRecipients, @TeamsWebhookUrl, @NotificationsEnabled, @IsActive)
+                     @CronExpression, @DayOfWeek, @EmailRecipients, @TeamsWebhookUrl, @SendOnFailure, @IsActive)
                 ON CONFLICT(DefinitionId) DO UPDATE SET
                     Name            = excluded.Name,
                     DeadlineTime    = excluded.DeadlineTime,
@@ -92,7 +92,7 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
                     DayOfWeek       = excluded.DayOfWeek,
                     EmailRecipients = excluded.EmailRecipients,
                     TeamsWebhookUrl = excluded.TeamsWebhookUrl,
-                    NotificationsEnabled = excluded.NotificationsEnabled,
+                    SendOnFailure   = excluded.SendOnFailure,
                     IsActive        = excluded.IsActive;
                 """;
 
@@ -111,7 +111,7 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
                 EmailRecipients = JsonSerializer.Serialize(
                     definition.EmailRecipients.Select(e => e.Value)),
                 definition.TeamsWebhookUrl,
-                NotificationsEnabled = definition.NotificationsEnabled ? 1 : 0,
+                SendOnFailure = definition.SendOnFailure ? 1 : 0,
                 IsActive = definition.IsActive ? 1 : 0
             }, transaction: tx, cancellationToken: ct));
 
@@ -221,7 +221,7 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
             watchedComponents,
             recipients,
             row.TeamsWebhookUrl,
-            notificationsEnabled: row.NotificationsEnabled == 1,
+            sendOnFailure: row.SendOnFailure == 1,
             isActive: row.IsActive == 1);
     }
 
@@ -235,7 +235,7 @@ public sealed class HealthMonitorDefinitionRepository : IHealthMonitorDefinition
         long? DayOfWeek,
         string EmailRecipients,
         string? TeamsWebhookUrl,
-        long NotificationsEnabled,
+        long SendOnFailure,
         long IsActive);
 
     private sealed record JunctionRow(

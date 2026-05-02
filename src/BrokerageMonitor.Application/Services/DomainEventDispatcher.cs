@@ -10,15 +10,18 @@ namespace BrokerageMonitor.Application.Services;
 /// Dispatches <see cref="ComponentStatusChanged"/> and <see cref="ComponentLost"/>
 /// to all downstream handlers independently — one handler's failure never
 /// propagates to other subscribers (US-028).
+///
+/// <para>
+/// Handler registration uses a type-keyed dictionary built at construction time.
+/// Adding support for a new domain event does not require modifying this class —
+/// register an additional entry in the constructor or introduce a full
+/// <c>IDomainEventHandler&lt;TEvent&gt;</c> DI registration if the catalogue grows.
+/// </para>
 /// </summary>
 public sealed class DomainEventDispatcher : IDomainEventDispatcher
 {
-    private readonly IAlertEvaluationService _alertEvaluation;
-    private readonly IAggregateHealthEvaluationService _healthEvaluation;
-    private readonly IRealtimeNotificationService _realtimeNotification;
-    private readonly IAuditLogger _auditLogger;
-    private readonly IComponentStateCache _stateCache;
     private readonly ILogger<DomainEventDispatcher> _logger;
+    private readonly IReadOnlyDictionary<Type, Func<IDomainEvent, CancellationToken, Task>> _handlers;
 
     public DomainEventDispatcher(
         IAlertEvaluationService alertEvaluation,
@@ -28,12 +31,22 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
         IComponentStateCache stateCache,
         ILogger<DomainEventDispatcher> logger)
     {
-        _alertEvaluation = alertEvaluation;
-        _healthEvaluation = healthEvaluation;
-        _realtimeNotification = realtimeNotification;
-        _auditLogger = auditLogger;
-        _stateCache = stateCache;
         _logger = logger;
+
+        _handlers = new Dictionary<Type, Func<IDomainEvent, CancellationToken, Task>>
+        {
+            [typeof(ComponentStatusChanged)] = (e, ct) =>
+                DispatchComponentStatusChangedAsync((ComponentStatusChanged)e, ct,
+                    alertEvaluation, healthEvaluation, realtimeNotification, auditLogger),
+
+            [typeof(ComponentLost)] = (e, ct) =>
+                DispatchComponentLostAsync((ComponentLost)e, ct,
+                    alertEvaluation, realtimeNotification, auditLogger, stateCache),
+
+            [typeof(ComponentStateOverridden)] = (e, ct) =>
+                DispatchComponentStateOverriddenAsync((ComponentStateOverridden)e, ct,
+                    alertEvaluation),
+        };
     }
 
     /// <inheritdoc />
@@ -42,25 +55,11 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
     {
         ArgumentNullException.ThrowIfNull(@event);
 
-        switch (@event)
-        {
-            case ComponentStatusChanged e:
-                await DispatchComponentStatusChangedAsync(e, ct);
-                break;
+        if (_handlers.TryGetValue(@event.GetType(), out var handler))
+            await handler(@event, ct);
 
-            case ComponentLost e:
-                await DispatchComponentLostAsync(e, ct);
-                break;
-
-            case ComponentStateOverridden e:
-                await DispatchComponentStateOverriddenAsync(e, ct);
-                break;
-
-            // Other events are intentionally unhandled at this layer;
-            // infrastructure services (HeartbeatTimeoutMonitor, SignalR) handle them directly.
-            default:
-                break;
-        }
+        // Events with no registered handler are intentionally unhandled at this layer;
+        // infrastructure services (HeartbeatTimeoutMonitor, SignalR) handle them directly.
     }
 
     // -------------------------------------------------------------------------
@@ -68,22 +67,26 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
     // -------------------------------------------------------------------------
 
     private async Task DispatchComponentStatusChangedAsync(
-        ComponentStatusChanged evt, CancellationToken ct)
+        ComponentStatusChanged evt, CancellationToken ct,
+        IAlertEvaluationService alertEvaluation,
+        IAggregateHealthEvaluationService healthEvaluation,
+        IRealtimeNotificationService realtimeNotification,
+        IAuditLogger auditLogger)
     {
         await SafeInvokeAsync(
-            () => _alertEvaluation.EvaluateAsync(evt, ct),
+            () => alertEvaluation.EvaluateAsync(evt, ct),
             nameof(IAlertEvaluationService));
 
         await SafeInvokeAsync(
-            () => _healthEvaluation.UpdateComponentProgressAsync(evt, ct),
+            () => healthEvaluation.UpdateComponentProgressAsync(evt, ct),
             nameof(IAggregateHealthEvaluationService));
 
         await SafeInvokeAsync(
-            () => _realtimeNotification.NotifyComponentStatusChangedAsync(evt, ct),
+            () => realtimeNotification.NotifyComponentStatusChangedAsync(evt, ct),
             nameof(IRealtimeNotificationService));
 
         await SafeInvokeAsync(
-            () => _auditLogger.LogStatusChangedAsync(
+            () => auditLogger.LogStatusChangedAsync(
                 evt.SystemId, evt.ComponentId,
                 evt.PreviousStatus, evt.NewStatus,
                 evt.OccurredAt, ct),
@@ -91,7 +94,8 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
     }
 
     private async Task DispatchComponentStateOverriddenAsync(
-        ComponentStateOverridden evt, CancellationToken ct)
+        ComponentStateOverridden evt, CancellationToken ct,
+        IAlertEvaluationService alertEvaluation)
     {
         // Route through AlertEvaluationService via a synthetic ComponentStatusChanged
         // so active alerts are cleared and new ones are raised for the overridden state.
@@ -103,15 +107,20 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
             evt.OccurredAt);
 
         await SafeInvokeAsync(
-            () => _alertEvaluation.EvaluateAsync(syntheticChange, ct),
+            () => alertEvaluation.EvaluateAsync(syntheticChange, ct),
             nameof(IAlertEvaluationService));
     }
 
-    private async Task DispatchComponentLostAsync(ComponentLost evt, CancellationToken ct)
+    private async Task DispatchComponentLostAsync(
+        ComponentLost evt, CancellationToken ct,
+        IAlertEvaluationService alertEvaluation,
+        IRealtimeNotificationService realtimeNotification,
+        IAuditLogger auditLogger,
+        IComponentStateCache stateCache)
     {
         // Look up actual previous status from the in-memory cache so audit entries
         // record the correct previous state instead of always logging Unknown.
-        var previousStatus = _stateCache.GetState(evt.ComponentId)?.Status
+        var previousStatus = stateCache.GetState(evt.ComponentId)?.Status
                              ?? ComponentStatus.Unknown;
 
         // ComponentLost re-routes through AlertEvaluationService via a synthetic status change
@@ -123,15 +132,15 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
             evt.OccurredAt);
 
         await SafeInvokeAsync(
-            () => _alertEvaluation.EvaluateAsync(syntheticChange, ct),
+            () => alertEvaluation.EvaluateAsync(syntheticChange, ct),
             nameof(IAlertEvaluationService));
 
         await SafeInvokeAsync(
-            () => _realtimeNotification.NotifyComponentStatusChangedAsync(syntheticChange, ct),
+            () => realtimeNotification.NotifyComponentStatusChangedAsync(syntheticChange, ct),
             nameof(IRealtimeNotificationService));
 
         await SafeInvokeAsync(
-            () => _auditLogger.LogStatusChangedAsync(
+            () => auditLogger.LogStatusChangedAsync(
                 evt.SystemId, evt.ComponentId,
                 previousStatus,
                 ComponentStatus.Lost,

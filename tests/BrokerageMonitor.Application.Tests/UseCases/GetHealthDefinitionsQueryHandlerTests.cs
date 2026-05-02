@@ -267,7 +267,7 @@ public sealed class GetHealthDefinitionsQueryHandlerTests
     Assert.AreEqual(def.Name, dto.Name);
     Assert.AreEqual(def.DeadlineTime, dto.DeadlineTime);
     Assert.AreEqual(def.Schedule.ScheduleType, dto.ScheduleType);
-    Assert.AreEqual(def.NotificationsEnabled, dto.NotificationsEnabled);
+    Assert.AreEqual(def.SendOnFailure, dto.SendOnFailure);
     Assert.AreEqual(def.IsActive, dto.IsActive);
   }
 

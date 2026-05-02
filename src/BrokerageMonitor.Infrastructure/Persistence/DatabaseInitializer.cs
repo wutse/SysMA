@@ -114,7 +114,7 @@ public sealed class DatabaseInitializer
             DayOfWeek       INTEGER,
             EmailRecipients TEXT NOT NULL DEFAULT '[]',
             TeamsWebhookUrl TEXT,
-            NotificationsEnabled INTEGER NOT NULL DEFAULT 0,
+            SendOnFailure   INTEGER NOT NULL DEFAULT 0,
             IsActive        INTEGER NOT NULL DEFAULT 1
         );
         """,
@@ -215,28 +215,33 @@ public sealed class DatabaseInitializer
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Migration: rename SendOnFailure → NotificationsEnabled (2026-05-01)
-        // Check if the old column still exists before renaming.
+        // Migration: rename NotificationsEnabled → SendOnFailure (2026-05-02)
+        // Restore correct per-FR-013/FR-014 semantics: flag controls failure-only channel.
+        // Check if the old column name still exists before renaming.
         using var pragma = connection.CreateCommand();
         pragma.CommandText = "PRAGMA table_info(HealthMonitorDefinitions);";
         using var reader = pragma.ExecuteReader();
+        bool hasNotificationsEnabled = false;
         bool hasSendOnFailure = false;
         while (reader.Read())
         {
-            if (reader["name"] is string name &&
-                string.Equals(name, "SendOnFailure", StringComparison.OrdinalIgnoreCase))
+            if (reader["name"] is string name)
             {
-                hasSendOnFailure = true;
-                break;
+                if (string.Equals(name, "NotificationsEnabled", StringComparison.OrdinalIgnoreCase))
+                    hasNotificationsEnabled = true;
+                if (string.Equals(name, "SendOnFailure", StringComparison.OrdinalIgnoreCase))
+                    hasSendOnFailure = true;
             }
         }
         reader.Close();
 
-        if (hasSendOnFailure)
+        // Step A: legacy rename SendOnFailure_v1 → NotificationsEnabled (skip if already done)
+        // Step B: rename NotificationsEnabled → SendOnFailure (current fix)
+        if (hasNotificationsEnabled && !hasSendOnFailure)
         {
             using var renameCmd = connection.CreateCommand();
             renameCmd.CommandText =
-                "ALTER TABLE HealthMonitorDefinitions RENAME COLUMN SendOnFailure TO NotificationsEnabled;";
+                "ALTER TABLE HealthMonitorDefinitions RENAME COLUMN NotificationsEnabled TO SendOnFailure;";
             renameCmd.ExecuteNonQuery();
         }
     }
