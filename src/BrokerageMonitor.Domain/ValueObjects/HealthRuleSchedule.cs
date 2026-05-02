@@ -21,9 +21,41 @@ public sealed class HealthRuleSchedule : IEquatable<HealthRuleSchedule>
         if (scheduleType == ScheduleType.Weekly && dayOfWeek is null)
             throw new ArgumentException("DayOfWeek is required for Weekly schedule type.", nameof(dayOfWeek));
 
+        if (scheduleType == ScheduleType.Cron && cronExpression is not null)
+            ValidateCronExpression(cronExpression);
+
         ScheduleType = scheduleType;
         CronExpression = cronExpression;
         DayOfWeek = dayOfWeek;
+    }
+
+    /// <summary>
+    /// Validates that the cron expression uses only the supported 5-field numeric subset.
+    /// Rejects Quartz-specific tokens (?, L, W, #) and alphabetic month/day names that
+    /// the custom <see cref="MatchesCron"/> parser does not handle, ensuring failures are
+    /// loud at construction time rather than silent false-returns at evaluation time.
+    /// </summary>
+    private static void ValidateCronExpression(string expression)
+    {
+        var parts = expression.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 5)
+            throw new ArgumentException(
+                "CronExpression must have exactly 5 space-separated fields: minute hour dayOfMonth month dayOfWeek.",
+                nameof(expression));
+
+        if (expression.IndexOfAny(['?', 'L', 'W', '#']) >= 0)
+            throw new ArgumentException(
+                "CronExpression contains unsupported tokens (?, L, W, #). Only *, ranges (-), lists (,), and steps (/) are supported.",
+                nameof(expression));
+
+        // Alphabetic day/month names (e.g. MON-FRI, JAN) are not supported by the numeric parser.
+        foreach (var part in parts)
+        {
+            if (part.Any(char.IsLetter))
+                throw new ArgumentException(
+                    $"CronExpression field '{part}' contains alphabetic characters. Use numeric values only.",
+                    nameof(expression));
+        }
     }
 
     public bool IsMatch(DateOnly date) => ScheduleType switch
