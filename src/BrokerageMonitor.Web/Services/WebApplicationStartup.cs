@@ -2,6 +2,7 @@ using BrokerageMonitor.Application.Services;
 using BrokerageMonitor.Application.Startup;
 using BrokerageMonitor.Infrastructure.Persistence;
 using BrokerageMonitor.Infrastructure.Scheduling;
+using Microsoft.Extensions.Options;
 using Quartz;
 
 namespace BrokerageMonitor.Web.Services;
@@ -14,8 +15,14 @@ namespace BrokerageMonitor.Web.Services;
 public sealed class WebApplicationStartup
 {
     private readonly WebApplication _app;
+    private readonly SchedulerOptions _schedulerOptions;
 
-    public WebApplicationStartup(WebApplication app) => _app = app;
+    public WebApplicationStartup(WebApplication app)
+    {
+        _app = app;
+        _schedulerOptions = app.Services
+            .GetRequiredService<IOptions<SchedulerOptions>>().Value;
+    }
 
     /// <summary>
     /// Runs all startup steps in the correct order.
@@ -37,10 +44,10 @@ public sealed class WebApplicationStartup
             .ConfigureAwait(false);
 
         await QuartzJobScheduler.ScheduleCronJobAsync<SmokeTestJob>(
-            scheduler, "0 0 1 * * ?", cancellationToken: ct).ConfigureAwait(false);
+            scheduler, _schedulerOptions.SmokeTestCron, cancellationToken: ct).ConfigureAwait(false);
 
         await QuartzJobScheduler.ScheduleCronJobAsync<DailyExecutionCreatorJob>(
-            scheduler, "0 30 5 * * ?", cancellationToken: ct).ConfigureAwait(false);
+            scheduler, _schedulerOptions.DailyExecutionCreatorCron, cancellationToken: ct).ConfigureAwait(false);
     }
 
     private async Task InitialiseDatabaseAsync(CancellationToken ct)

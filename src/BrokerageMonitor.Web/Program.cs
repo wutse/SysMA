@@ -57,6 +57,10 @@ try
     builder.Services.AddRazorComponents()
         .AddInteractiveServerComponents();
 
+    // Bind Scheduler cron settings from appsettings.json
+    builder.Services.Configure<SchedulerOptions>(
+        builder.Configuration.GetSection(SchedulerOptions.SectionName));
+
     var app = builder.Build();
 
     // Configure the HTTP request pipeline.

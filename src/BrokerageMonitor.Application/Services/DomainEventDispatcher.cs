@@ -73,22 +73,22 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
     {
         await SafeInvokeAsync(
             () => alertEvaluation.EvaluateAsync(evt, ct),
-            nameof(IAlertEvaluationService), logger);
+            nameof(IAlertEvaluationService), logger).ConfigureAwait(false);
 
         await SafeInvokeAsync(
             () => healthEvaluation.UpdateComponentProgressAsync(evt, ct),
-            nameof(IAggregateHealthEvaluationService), logger);
+            nameof(IAggregateHealthEvaluationService), logger).ConfigureAwait(false);
 
         await SafeInvokeAsync(
             () => realtimeNotification.NotifyComponentStatusChangedAsync(evt, ct),
-            nameof(IRealtimeNotificationService), logger);
+            nameof(IRealtimeNotificationService), logger).ConfigureAwait(false);
 
         await SafeInvokeAsync(
             () => auditLogger.LogStatusChangedAsync(
                 evt.SystemId, evt.ComponentId,
                 evt.PreviousStatus, evt.NewStatus,
                 evt.OccurredAt, ct),
-            nameof(IAuditLogger), logger);
+            nameof(IAuditLogger), logger).ConfigureAwait(false);
     }
 
     private static async Task DispatchComponentStateOverriddenAsync(
@@ -107,7 +107,7 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
 
         await SafeInvokeAsync(
             () => alertEvaluation.EvaluateAsync(syntheticChange, ct),
-            nameof(IAlertEvaluationService), logger);
+            nameof(IAlertEvaluationService), logger).ConfigureAwait(false);
     }
 
     private static async Task DispatchComponentLostAsync(
@@ -133,11 +133,11 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
 
         await SafeInvokeAsync(
             () => alertEvaluation.EvaluateAsync(syntheticChange, ct),
-            nameof(IAlertEvaluationService), logger);
+            nameof(IAlertEvaluationService), logger).ConfigureAwait(false);
 
         await SafeInvokeAsync(
             () => realtimeNotification.NotifyComponentStatusChangedAsync(syntheticChange, ct),
-            nameof(IRealtimeNotificationService), logger);
+            nameof(IRealtimeNotificationService), logger).ConfigureAwait(false);
 
         await SafeInvokeAsync(
             () => auditLogger.LogStatusChangedAsync(
@@ -145,7 +145,7 @@ public sealed class DomainEventDispatcher : IDomainEventDispatcher
                 previousStatus,
                 ComponentStatus.Lost,
                 evt.OccurredAt, ct),
-            nameof(IAuditLogger), logger);
+            nameof(IAuditLogger), logger).ConfigureAwait(false);
     }
 
     /// <summary>
