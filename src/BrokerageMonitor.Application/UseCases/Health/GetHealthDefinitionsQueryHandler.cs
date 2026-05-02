@@ -21,17 +21,20 @@ public sealed class GetHealthDefinitionsQueryHandler
     private readonly IHealthMonitorDefinitionRepository _definitionRepo;
     private readonly IDailyExecutionRepository _executionRepo;
     private readonly IMonitoredComponentRepository _componentRepo;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<GetHealthDefinitionsQueryHandler> _logger;
 
     public GetHealthDefinitionsQueryHandler(
         IHealthMonitorDefinitionRepository definitionRepo,
         IDailyExecutionRepository executionRepo,
         IMonitoredComponentRepository componentRepo,
+        TimeProvider timeProvider,
         ILogger<GetHealthDefinitionsQueryHandler> logger)
     {
         _definitionRepo = definitionRepo;
         _executionRepo = executionRepo;
         _componentRepo = componentRepo;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -43,7 +46,7 @@ public sealed class GetHealthDefinitionsQueryHandler
             ? await _definitionRepo.GetAllActiveAsync(ct).ConfigureAwait(false)
             : await _definitionRepo.GetBySystemIdAsync(query.SystemId, ct).ConfigureAwait(false);
 
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var today = DateOnly.FromDateTime(_timeProvider.GetLocalNow().DateTime);
         var todayExecutions = await _executionRepo.GetByDateAsync(today, ct).ConfigureAwait(false);
         var executionByDefinition = todayExecutions.ToDictionary(e => e.DefinitionId);
 

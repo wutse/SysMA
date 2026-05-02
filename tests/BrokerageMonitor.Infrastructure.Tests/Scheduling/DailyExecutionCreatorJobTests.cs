@@ -16,6 +16,7 @@ public sealed class DailyExecutionCreatorJobTests
     private static DailyExecutionCreatorJob CreateJob(IDailyExecutionCreatorService service) =>
         new(
             new FakeScopeFactory(service),
+            TimeProvider.System,
             NullLogger<DailyExecutionCreatorJob>.Instance);
 
     // -----------------------------------------------------------------------

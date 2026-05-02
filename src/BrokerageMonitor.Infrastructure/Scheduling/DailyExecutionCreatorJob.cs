@@ -14,13 +14,16 @@ namespace BrokerageMonitor.Infrastructure.Scheduling;
 public sealed class DailyExecutionCreatorJob : IJob
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<DailyExecutionCreatorJob> _logger;
 
     public DailyExecutionCreatorJob(
         IServiceScopeFactory scopeFactory,
+        TimeProvider timeProvider,
         ILogger<DailyExecutionCreatorJob> logger)
     {
         _scopeFactory = scopeFactory;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -28,7 +31,7 @@ public sealed class DailyExecutionCreatorJob : IJob
     public async Task Execute(IJobExecutionContext context)
     {
         var ct = context.CancellationToken;
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var today = DateOnly.FromDateTime(_timeProvider.GetLocalNow().DateTime);
 
         _logger.LogInformation("DailyExecutionCreatorJob started for date {Date}.", today);
 

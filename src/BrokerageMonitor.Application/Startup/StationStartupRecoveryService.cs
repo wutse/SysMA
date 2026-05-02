@@ -28,6 +28,7 @@ public sealed class StationStartupRecoveryService : IStartupRecoveryService
     private readonly IHeartbeatTimerRegistry _timerRegistry;
     private readonly IDomainEventDispatcher _eventDispatcher;
     private readonly IDailyExecutionCreatorService _dailyExecutionCreator;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<StationStartupRecoveryService> _logger;
 
     public StationStartupRecoveryService(
@@ -37,6 +38,7 @@ public sealed class StationStartupRecoveryService : IStartupRecoveryService
         IHeartbeatTimerRegistry timerRegistry,
         IDomainEventDispatcher eventDispatcher,
         IDailyExecutionCreatorService dailyExecutionCreator,
+        TimeProvider timeProvider,
         ILogger<StationStartupRecoveryService> logger)
     {
         _stateRepository = stateRepository;
@@ -45,6 +47,7 @@ public sealed class StationStartupRecoveryService : IStartupRecoveryService
         _timerRegistry = timerRegistry;
         _eventDispatcher = eventDispatcher;
         _dailyExecutionCreator = dailyExecutionCreator;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -63,7 +66,7 @@ public sealed class StationStartupRecoveryService : IStartupRecoveryService
         var allComponents = await _componentRepository.GetAllActiveAsync(ct);
 
         // Step 3 — register all components, then handle ScheduledJob Running → Warning
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         foreach (var component in allComponents)
         {
             _timerRegistry.RegisterComponent(

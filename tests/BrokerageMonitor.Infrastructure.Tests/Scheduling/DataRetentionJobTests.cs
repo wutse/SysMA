@@ -25,6 +25,7 @@ public sealed class DataRetentionJobTests
             auditLog ?? new FakeAuditLogRepository(),
             notificationInbox ?? new FakeNotificationInboxRepository(),
             dailyExecution ?? new FakeDailyExecutionRepository(),
+            TimeProvider.System,
             NullLogger<DataRetentionJob>.Instance);
 
     // ---------------------------------------------------------------

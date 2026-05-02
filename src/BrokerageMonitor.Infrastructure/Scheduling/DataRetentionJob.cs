@@ -30,6 +30,7 @@ public sealed class DataRetentionJob : IJob
     private readonly IAuditLogRepository _auditLog;
     private readonly INotificationInboxRepository _notificationInbox;
     private readonly IDailyExecutionRepository _dailyExecution;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<DataRetentionJob> _logger;
 
     public DataRetentionJob(
@@ -37,12 +38,14 @@ public sealed class DataRetentionJob : IJob
         IAuditLogRepository auditLog,
         INotificationInboxRepository notificationInbox,
         IDailyExecutionRepository dailyExecution,
+        TimeProvider timeProvider,
         ILogger<DataRetentionJob> logger)
     {
         _executionHistory = executionHistory;
         _auditLog = auditLog;
         _notificationInbox = notificationInbox;
         _dailyExecution = dailyExecution;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -55,7 +58,7 @@ public sealed class DataRetentionJob : IJob
             ? context.MergedJobDataMap.GetInt(RetentionDaysKey)
             : DefaultRetentionDays;
 
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays);
+        var cutoff = _timeProvider.GetUtcNow().AddDays(-retentionDays);
 
         _logger.LogInformation(
             "DataRetentionJob starting. Cutoff: {Cutoff} (retaining {Days} days).",

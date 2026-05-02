@@ -102,6 +102,7 @@ public sealed class StationStartupRecoveryServiceTests
         var executionCreator = new NullDailyExecutionCreatorService();
         var sut = new StationStartupRecoveryService(
             stateRepo, componentRepo, cache, timers, events, executionCreator,
+            TimeProvider.System,
             NullLogger<StationStartupRecoveryService>.Instance);
         return (sut, stateRepo, componentRepo, cache, timers, events);
     }

@@ -8,27 +8,27 @@ namespace BrokerageMonitor.Web.Services;
 /// </summary>
 public sealed class SchedulerOptionsValidator : IValidateOptions<SchedulerOptions>
 {
-  /// <inheritdoc />
-  public ValidateOptionsResult Validate(string? name, SchedulerOptions options)
-  {
-    var errors = new List<string>();
+    /// <inheritdoc />
+    public ValidateOptionsResult Validate(string? name, SchedulerOptions options)
+    {
+        var errors = new List<string>();
 
-    if (!IsValidQuartzCron(options.SmokeTestCron))
-      errors.Add($"Scheduler:SmokeTestCron '{options.SmokeTestCron}' is not a valid 6-field Quartz cron expression.");
+        if (!IsValidQuartzCron(options.SmokeTestCron))
+            errors.Add($"Scheduler:SmokeTestCron '{options.SmokeTestCron}' is not a valid 6-field Quartz cron expression.");
 
-    if (!IsValidQuartzCron(options.DailyExecutionCreatorCron))
-      errors.Add($"Scheduler:DailyExecutionCreatorCron '{options.DailyExecutionCreatorCron}' is not a valid 6-field Quartz cron expression.");
+        if (!IsValidQuartzCron(options.DailyExecutionCreatorCron))
+            errors.Add($"Scheduler:DailyExecutionCreatorCron '{options.DailyExecutionCreatorCron}' is not a valid 6-field Quartz cron expression.");
 
-    return errors.Count > 0
-        ? ValidateOptionsResult.Fail(errors)
-        : ValidateOptionsResult.Success;
-  }
+        return errors.Count > 0
+            ? ValidateOptionsResult.Fail(errors)
+            : ValidateOptionsResult.Success;
+    }
 
-  /// <summary>
-  /// Performs a lightweight structural check: non-empty, exactly 6 whitespace-delimited fields.
-  /// Quartz cron expressions have the form: seconds minutes hours day-of-month month day-of-week.
-  /// </summary>
-  private static bool IsValidQuartzCron(string? cron) =>
-      !string.IsNullOrWhiteSpace(cron) &&
-      cron.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries).Length == 6;
+    /// <summary>
+    /// Performs a lightweight structural check: non-empty, exactly 6 whitespace-delimited fields.
+    /// Quartz cron expressions have the form: seconds minutes hours day-of-month month day-of-week.
+    /// </summary>
+    private static bool IsValidQuartzCron(string? cron) =>
+        !string.IsNullOrWhiteSpace(cron) &&
+        cron.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries).Length == 6;
 }

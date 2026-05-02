@@ -158,6 +158,7 @@ public sealed class GetHealthDefinitionsQueryHandlerTests
         _definitionRepo,
         _executionRepo,
         _componentRepo,
+        TimeProvider.System,
         NullLogger<GetHealthDefinitionsQueryHandler>.Instance);
   }
 
