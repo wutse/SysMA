@@ -146,6 +146,14 @@ internal sealed class DEC_Realtime : IRealtimeNotificationService
     }
 }
 
+/// <summary>TimeProvider that returns a fixed UTC timestamp for deterministic testing.</summary>
+internal sealed class DEC_FixedTimeProvider : TimeProvider
+{
+    private readonly DateTimeOffset _fixed;
+    public DEC_FixedTimeProvider(DateTimeOffset fixedUtcNow) => _fixed = fixedUtcNow;
+    public override DateTimeOffset GetUtcNow() => _fixed;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -409,5 +417,41 @@ public sealed class DailyExecutionCreatorServiceTests
         var today = DateOnly.FromDateTime(DateTime.Today);
         Assert.HasCount(1, executions.Store);
         Assert.AreEqual(today, executions.Store[0].ExecutionDate);
+    }
+
+    /// <summary>
+    /// N2: The DailyExecution.CreatedAt must be sourced from the injected TimeProvider,
+    /// not from the DateTimeOffset.UtcNow domain constructor fallback.
+    /// </summary>
+    [TestMethod]
+    public async Task CreateForDateAsync_DailyDefinitionMatchesDate_CreatedAtFromTimeProvider()
+    {
+        // Arrange — use a frozen TimeProvider to produce a deterministic timestamp
+        var frozenNow = new DateTimeOffset(2026, 1, 15, 9, 30, 0, TimeSpan.Zero);
+        var definitions = new DEC_DefinitionRepo();
+        var executions = new DEC_ExecutionRepo();
+        var componentStateRepo = new DEC_ComponentStateRepo();
+        var cache = new DEC_StateCache();
+        var realtime = new DEC_Realtime();
+
+        var sut = new DailyExecutionCreatorService(
+            definitions,
+            executions,
+            componentStateRepo,
+            cache,
+            realtime,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DailyExecutionCreatorService>.Instance,
+            new DEC_FixedTimeProvider(frozenNow));
+
+        var def = MakeDailyDefinition();
+        definitions.Add(def);
+
+        // Act
+        await sut.CreateForDateAsync(new DateOnly(2026, 1, 15));
+
+        // Assert
+        Assert.HasCount(1, executions.Store);
+        Assert.AreEqual(frozenNow, executions.Store[0].CreatedAt,
+            "CreatedAt must be sourced from the injected TimeProvider (N2 fix)");
     }
 }

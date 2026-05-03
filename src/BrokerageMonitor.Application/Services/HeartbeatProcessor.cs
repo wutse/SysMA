@@ -64,7 +64,7 @@ public sealed class HeartbeatProcessor : IHeartbeatProcessor
         var rolledUpStatus = ComputeRolledUpStatus(reportedStatus, subIndicators);
 
         var currentState = _stateCache.GetState(message.ComponentId)
-            ?? new ComponentState(message.ComponentId, ComponentStatus.Unknown);
+            ?? new ComponentState(message.ComponentId, ComponentStatus.Unknown, message.Timestamp);
 
         var previousStatus = currentState.Status;
 

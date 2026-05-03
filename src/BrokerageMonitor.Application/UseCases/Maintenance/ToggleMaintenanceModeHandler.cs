@@ -95,9 +95,14 @@ public sealed class ToggleMaintenanceModeHandler
         // Update all component states for this system
         var components = await _componentRepository.GetBySystemIdAsync(command.SystemId, ct);
 
+        // N3: batch-read existing states to avoid N+1 DB round-trips (GetByComponentIdsAsync = 1 query).
+        var componentIds = components.Select(c => c.ComponentId).ToList();
+        var existingStates = await _stateRepository.GetByComponentIdsAsync(componentIds, ct);
+        var stateById = existingStates.ToDictionary(s => s.ComponentId, StringComparer.Ordinal);
+
         foreach (var component in components)
         {
-            var state = await _stateRepository.GetByComponentIdAsync(component.ComponentId, ct)
+            var state = stateById.GetValueOrDefault(component.ComponentId)
                         ?? new ComponentState(component.ComponentId);
 
             state.UpdateStatus(targetStatus, now);

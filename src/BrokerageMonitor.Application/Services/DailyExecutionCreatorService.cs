@@ -112,7 +112,8 @@ public sealed class DailyExecutionCreatorService : IDailyExecutionCreatorService
             systemId: definition.SystemId,
             executionDate: date,
             initialStatus: initialStatus,
-            missedReason: missedReason);
+            missedReason: missedReason,
+            createdAt: _timeProvider.GetUtcNow());
 
         await _executionRepo.AddAsync(execution, ct).ConfigureAwait(false);
 

@@ -376,4 +376,33 @@ public sealed class HeartbeatProcessorTests
                 $"{status} should have higher severity than Normal");
         }
     }
+
+    /// <summary>
+    /// N2: When no cached state exists for a component, the new ComponentState's
+    /// LastStatusChangedAt must be seeded from message.Timestamp — not from
+    /// the static DateTimeOffset.UtcNow domain fallback.
+    /// </summary>
+    [TestMethod]
+    public async Task ProcessAsync_NewComponentWithNoCachedState_InitialTimestampFromMessage()
+    {
+        // Arrange
+        var (sut, repo, _, cache, _, _) = CreateSut();
+        repo.Add(BuildServiceComponent());
+
+        var historicalTimestamp = new DateTimeOffset(2025, 6, 1, 8, 0, 0, TimeSpan.Zero);
+        var message = new HeartbeatMessage(
+            "Heartbeat", "SYS-01", "COMP-01",
+            historicalTimestamp, "Normal", null, null);
+
+        // Act
+        await sut.ProcessAsync(message);
+
+        // Assert — the state was created using message.Timestamp, not DateTime.UtcNow
+        var state = cache.GetState("COMP-01");
+        Assert.IsNotNull(state);
+        // After ProcessAsync the status changes Unknown → Normal, which calls UpdateStatus
+        // with message.Timestamp — so LastStatusChangedAt must match.
+        Assert.AreEqual(historicalTimestamp, state!.LastStatusChangedAt,
+            "LastStatusChangedAt must be sourced from message.Timestamp (N2 fix)");
+    }
 }

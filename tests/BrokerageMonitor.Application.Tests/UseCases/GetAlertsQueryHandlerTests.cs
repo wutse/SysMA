@@ -14,6 +14,9 @@ internal sealed class GetAlerts_AlertRepo : IAlertRecordRepository
   private readonly List<AlertRecord> _unacknowledged = [];
   private readonly List<AlertRecord> _history = [];
 
+  /// <summary>Captures args passed to the last GetHistoryAsync call.</summary>
+  public (DateTimeOffset From, DateTimeOffset To)? LastHistoryArgs { get; private set; }
+
   public void AddUnacknowledged(AlertRecord alert) => _unacknowledged.Add(alert);
   public void AddHistory(AlertRecord alert) => _history.Add(alert);
 
@@ -35,7 +38,18 @@ internal sealed class GetAlerts_AlertRepo : IAlertRecordRepository
 
   public Task<IReadOnlyList<AlertRecord>> GetHistoryAsync(
       string? systemId, DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default)
-      => Task.FromResult<IReadOnlyList<AlertRecord>>([.. _history]);
+  {
+    LastHistoryArgs = (from, to);
+    return Task.FromResult<IReadOnlyList<AlertRecord>>([.. _history]);
+  }
+}
+
+/// <summary>TimeProvider that always returns a fixed timestamp.</summary>
+internal sealed class FixedTimeProvider : TimeProvider
+{
+  private readonly DateTimeOffset _fixed;
+  public FixedTimeProvider(DateTimeOffset fixedUtcNow) => _fixed = fixedUtcNow;
+  public override DateTimeOffset GetUtcNow() => _fixed;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,5 +119,28 @@ public sealed class GetAlertsQueryHandlerTests
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(() =>
         sut.HandleAsync(null!));
+  }
+
+  /// <summary>
+  /// N4: When both From and To are null, the handler must derive both values from a
+  /// single clock read so that from + 7 days == to exactly (single-tick consistency).
+  /// </summary>
+  [TestMethod]
+  public async Task HandleAsync_NullFromAndTo_FromAndToAreConsistentSingleClockRead()
+  {
+    // Arrange — freeze time so the single GetUtcNow() call returns a known value
+    var frozenNow = new DateTimeOffset(2026, 1, 15, 10, 0, 0, TimeSpan.Zero);
+    var repo = new GetAlerts_AlertRepo();
+    var sut = new GetAlertsQueryHandler(repo, new FixedTimeProvider(frozenNow));
+
+    // Act
+    await sut.HandleAsync(new GetAlertsQuery(UnacknowledgedOnly: false, From: null, To: null));
+
+    // Assert — from and to were both derived from the same frozen "now"
+    Assert.IsNotNull(repo.LastHistoryArgs);
+    Assert.AreEqual(frozenNow.AddDays(-7), repo.LastHistoryArgs!.Value.From,
+        "From should be exactly now - 7 days from a single clock read");
+    Assert.AreEqual(frozenNow, repo.LastHistoryArgs.Value.To,
+        "To should be exactly now from the same clock read");
   }
 }

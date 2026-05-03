@@ -58,16 +58,24 @@ internal sealed class ToggleMaint_StateRepo : IComponentStateRepository
 {
     private readonly Dictionary<string, ComponentState> _store = new();
     public List<ComponentState> UpsertedStates { get; } = new();
+    public int BatchReadCallCount { get; private set; }
+    public int SingleReadCallCount { get; private set; }
 
     public void Add(ComponentState state) => _store[state.ComponentId] = state;
 
     public Task<ComponentState?> GetByComponentIdAsync(string componentId, CancellationToken ct = default)
-        => Task.FromResult(_store.GetValueOrDefault(componentId));
+    {
+        SingleReadCallCount++;
+        return Task.FromResult(_store.GetValueOrDefault(componentId));
+    }
 
     public Task<IReadOnlyList<ComponentState>> GetByComponentIdsAsync(
         IEnumerable<string> ids, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ComponentState>>(
+    {
+        BatchReadCallCount++;
+        return Task.FromResult<IReadOnlyList<ComponentState>>(
             ids.Select(id => _store.GetValueOrDefault(id)).Where(s => s != null).Select(s => s!).ToList());
+    }
 
     public Task<IReadOnlyList<ComponentState>> GetAllAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<ComponentState>>([.. _store.Values]);
@@ -394,5 +402,28 @@ public sealed class ToggleMaintenanceModeHandlerTests
 
         Assert.HasCount(1, _stateCache.SetStateCalls);
         Assert.AreEqual(ComponentStatus.Unknown, _stateCache.SetStateCalls[0].Status);
+    }
+
+    /// <summary>
+    /// N3: Component states must be loaded via a single GetByComponentIdsAsync batch call,
+    /// not via individual GetByComponentIdAsync calls in a loop (N+1 anti-pattern).
+    /// </summary>
+    [TestMethod]
+    public async Task HandleAsync_Activate_UsesGetByComponentIdsAsync_NoPlusOneReads()
+    {
+        // Arrange — add a second component to exercise multi-component path
+        _componentRepo.Add(ToggleMaint_Builder.Component(id: "COMP-2"));
+        _stateRepo.Add(ToggleMaint_Builder.State("COMP-2"));
+
+        var command = new ToggleMaintenanceModeCommand("SYS-1", true, "Alice");
+
+        // Act
+        await _sut.HandleAsync(command);
+
+        // Assert — exactly 1 batch read (N3 fix), zero individual reads
+        Assert.AreEqual(1, _stateRepo.BatchReadCallCount,
+            "States should be loaded via a single GetByComponentIdsAsync call");
+        Assert.AreEqual(0, _stateRepo.SingleReadCallCount,
+            "GetByComponentIdAsync must not be called in a loop (N+1 violation)");
     }
 }
